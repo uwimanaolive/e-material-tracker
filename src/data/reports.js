@@ -1,0 +1,6 @@
+export const reports = [
+  { id: 1, employeeId: 1, employeeName: "Alice Mugisha", department: "Finance", equipmentName: "Logitech MX Keys", serialNumber: "LK123456", issueType: "Damaged", description: "Keys not registering input.", proofFilename: "keyboard_photo.jpg", status: "pending", timeline: [], createdAt: "2023-10-25T08:00:00Z" },
+  { id: 2, employeeId: 5, employeeName: "Eve Ishimwe", department: "Engineering", equipmentName: "USB-C Hub", serialNumber: "HUB789", issueType: "Lost", description: "Lost during business travel.", proofFilename: "", status: "pending", timeline: [], createdAt: "2023-10-24T14:00:00Z" },
+  { id: 3, employeeId: 1, employeeName: "Alice Mugisha", department: "Finance", equipmentName: "Dell Monitor 24\"", serialNumber: "DM0001", issueType: "Damaged", description: "Dead pixels on screen.", proofFilename: "monitor_issue.png", status: "resolved", timeline: [], createdAt: "2023-10-20T10:00:00Z" },
+  { id: 4, employeeId: 5, employeeName: "Eve Ishimwe", department: "Engineering", equipmentName: "MacBook Pro 14\"", serialNumber: "MBP999", issueType: "Damaged", description: "Spilled water on trackpad.", proofFilename: "laptop_damage.jpg", status: "forwarded_hr", timeline: [], createdAt: "2023-10-22T09:00:00Z" }
+];
