@@ -1,19 +1,28 @@
 import React, { useState } from "react";
 import { useLocation } from "wouter";
 import { useStore } from "../store";
-import { Shield, Eye, EyeOff } from "lucide-react";
+import { authApi } from "../api/auth";
+import { Shield, Eye, EyeOff, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
 import logo from "../assets/logo.webp";
 
 export const Login = () => {
   const [, setLocation] = useLocation();
-  const { employees, setCurrentUser } = useStore();
+  const { currentUser, setCurrentUser } = useStore();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleLogin = () => {
+  React.useEffect(() => {
+    if (currentUser?.role) {
+      const role = currentUser.role === "specialist" ? "head" : currentUser.role;
+      setLocation(`/${role}`);
+    }
+  }, [currentUser, setLocation]);
+
+  const handleLogin = async () => {
     if (!username.trim()) {
       setError("Please enter your username.");
       return;
@@ -23,19 +32,22 @@ export const Login = () => {
       return;
     }
 
-    const user = employees.find(
-      (e) =>
-        e.username.toLowerCase() === username.trim().toLowerCase() &&
-        e.password === password
-    );
+    setIsLoading(true);
+    setError("");
 
-    if (!user) {
-      setError("Invalid username or password.");
-      return;
+    try {
+      const response = await authApi.login(username, password);
+      if (!response?.user?.role) {
+        throw new Error("Invalid login response from server");
+      }
+      setCurrentUser(response.user);
+      const role = response.user.role === "specialist" ? "head" : response.user.role;
+      setLocation(`/${role}`);
+    } catch (err) {
+      setError(err.message || "Invalid username or password.");
+    } finally {
+      setIsLoading(false);
     }
-
-    setCurrentUser(user);
-    setLocation(`/${user.role}`);
   };
 
   const handleKeyDown = (e) => {
@@ -52,7 +64,7 @@ export const Login = () => {
           <img src={logo} alt="Logo" className="mx-auto" />
 
           <p className="text-muted-foreground mt-1 text-sm">
-            E-Material Tracker
+            ASSETS TRACKER
           </p>
         </motion.div>
 
@@ -125,9 +137,17 @@ export const Login = () => {
             {/* Submit */}
             <button
               onClick={handleLogin}
-              className="w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 active:scale-[0.98] transition-all"
+              disabled={isLoading}
+              className="w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
-              Sign in
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Signing in...
+                </>
+              ) : (
+                "Sign in"
+              )}
             </button>
           </div>
         </div>

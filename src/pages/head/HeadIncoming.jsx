@@ -1,0 +1,214 @@
+import React from "react";
+import { requestsApi } from "../../api/requests";
+import { gatePassesApi } from "../../api/gatePasses";
+import { issueReportsApi } from "../../api/issueReports";
+import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
+import { Button } from "../../components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
+import { Textarea } from "../../components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select";
+import { Label } from "../../components/ui/label";
+import { Timeline } from "../../components/Timeline";
+import { AttachmentViewer } from "../../components/AttachmentViewer";
+import { StatusBadge } from "../../components/StatusBadge";
+import { Inbox, Check, X, Clock } from "lucide-react";
+import { format } from "date-fns";
+import { toast } from "sonner";
+
+export const HeadIncoming = () => {
+  const [requests, setRequests] = React.useState([]);
+  const [gatePasses, setGatePasses] = React.useState([]);
+  const [reports, setReports] = React.useState([]);
+  const [trackRequests, setTrackRequests] = React.useState([]);
+  const [trackGatePasses, setTrackGatePasses] = React.useState([]);
+  const [trackReports, setTrackReports] = React.useState([]);
+  const [selected, setSelected] = React.useState(null);
+  const [type, setType] = React.useState(null);
+  const [notes, setNotes] = React.useState("");
+  const [recommendation, setRecommendation] = React.useState("");
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => { loadAll(); }, []);
+
+  const loadAll = async () => {
+    try {
+      const [r, g, ir, tr, tg, tir] = await Promise.all([
+        requestsApi.getOwnerPending(),
+        gatePassesApi.getOwnerPending(),
+        issueReportsApi.getOwnerPending(),
+        requestsApi.getOwnerTracking(),
+        gatePassesApi.getOwnerTracking(),
+        issueReportsApi.getOwnerTracking(),
+      ]);
+      setRequests(r);
+      setGatePasses(g);
+      setReports(ir);
+      setTrackRequests(tr);
+      setTrackGatePasses(tg);
+      setTrackReports(tir);
+    } catch {
+      toast.error("Failed to load incoming items");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openItem = async (itemType, item) => {
+    try {
+      let detail = item;
+      if (itemType === "request") detail = await requestsApi.getById(item.id);
+      if (itemType === "gatepass") detail = await gatePassesApi.getById(item.id);
+      if (itemType === "report") detail = await issueReportsApi.getById(item.id);
+      setSelected(detail);
+      setType(itemType);
+      setNotes("");
+      setRecommendation("");
+    } catch {
+      toast.error("Failed to load details");
+    }
+  };
+
+  const handleApprove = async () => {
+    try {
+      if (type === "request") await requestsApi.ownerAction(selected.id, { action: "approve", notes });
+      if (type === "gatepass") await gatePassesApi.ownerAction(selected.id, { action: "approve", notes });
+      if (type === "report") await issueReportsApi.ownerAction(selected.id, { assessment_notes: notes, recommendation });
+      toast.success("Approved — forwarded to procurement");
+      setSelected(null);
+      loadAll();
+    } catch (error) {
+      toast.error(error.message || "Action failed");
+    }
+  };
+
+  const handleReject = async () => {
+    if (!notes.trim()) { toast.error("Please provide a reason"); return; }
+    try {
+      if (type === "request") await requestsApi.ownerAction(selected.id, { action: "reject", notes });
+      if (type === "gatepass") await gatePassesApi.ownerAction(selected.id, { action: "reject", notes });
+      toast.success("Rejected");
+      setSelected(null);
+      loadAll();
+    } catch (error) {
+      toast.error(error.message || "Action failed");
+    }
+  };
+
+  const ItemTable = ({ data, t, cols, showReview = true }) => (
+    data.length === 0 ? (
+      <p className="text-center py-8 text-muted-foreground">No items</p>
+    ) : (
+      <Table>
+        <TableHeader><TableRow>{cols.map((c) => <TableHead key={c}>{c}</TableHead>)}<TableHead>Status</TableHead>{showReview && <TableHead></TableHead>}</TableRow></TableHeader>
+        <TableBody>
+          {data.map((item) => (
+            <TableRow key={item.id}>
+              <TableCell className="font-medium">{item.request_number || item.gate_pass_number || item.report_number}</TableCell>
+              <TableCell>{item.department_name || item.employee_name || item.reporter_name}</TableCell>
+              {t !== "request" && <TableCell>{item.asset_name}</TableCell>}
+              <TableCell>{format(new Date(item.created_at || item.updated_at), "MMM d, yyyy")}</TableCell>
+              <TableCell><StatusBadge status={item.status} item={item} /></TableCell>
+              {showReview && <TableCell><Button size="sm" variant="ghost" onClick={() => openItem(t, item)}>View</Button></TableCell>}
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    )
+  );
+
+  if (loading) return <div className="p-6 text-muted-foreground">Loading...</div>;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold">Incoming Approvals</h1>
+        <p className="text-muted-foreground">Review cross-department requests and track items awaiting procurement</p>
+      </div>
+
+      <Tabs defaultValue="requests">
+        <TabsList>
+          <TabsTrigger value="requests">Requests ({requests.length})</TabsTrigger>
+          <TabsTrigger value="gatepasses">Gate Passes ({gatePasses.length})</TabsTrigger>
+          <TabsTrigger value="reports">Issue Reports ({reports.length})</TabsTrigger>
+        </TabsList>
+
+        {[
+          { key: "requests", pending: requests, tracking: trackRequests, type: "request", cols: ["Request #", "From Dept", "Date"] },
+          { key: "gatepasses", pending: gatePasses, tracking: trackGatePasses, type: "gatepass", cols: ["Gate Pass #", "Employee", "Asset", "Date"] },
+          { key: "reports", pending: reports, tracking: trackReports, type: "report", cols: ["Report #", "Reporter", "Asset", "Date"] },
+        ].map(({ key, pending, tracking, type: t, cols }) => (
+          <TabsContent key={key} value={key} className="space-y-4">
+            <Card>
+              <CardHeader><CardTitle className="flex items-center gap-2"><Inbox className="w-5 h-5" /> Pending Your Approval</CardTitle></CardHeader>
+              <CardContent><ItemTable data={pending} t={t} cols={cols} /></CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle className="flex items-center gap-2"><Clock className="w-5 h-5" /> Tracking — After Your Approval</CardTitle></CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground mb-4">Items you approved that are now with procurement or completed</p>
+                <ItemTable data={tracking} t={t} cols={cols} showReview={true} />
+              </CardContent>
+            </Card>
+          </TabsContent>
+        ))}
+      </Tabs>
+
+      <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Item Details</DialogTitle>
+            <DialogDescription>{selected?.request_number || selected?.gate_pass_number || selected?.report_number}</DialogDescription>
+          </DialogHeader>
+          {selected && (
+            <div className="space-y-4">
+              <StatusBadge status={selected.status} item={selected} />
+              {selected.assignee_name && <p className="text-sm"><span className="font-medium">Assignee:</span> {selected.assignee_name}</p>}
+              {selected.justification && <p className="text-sm">{selected.justification}</p>}
+              {type === "request" && selected.items?.length > 0 && (
+                <ul className="text-sm text-muted-foreground space-y-1">
+                  {selected.items.map((item, i) => (
+                    <li key={i}>• {item.quantity}x {item.category_name}{item.selected_assets?.length ? ` (${item.selected_assets.map((a) => a.name).join(", ")})` : ""}</li>
+                  ))}
+                </ul>
+              )}
+              {selected.description && <p className="text-sm">{selected.description}</p>}
+              {selected.reason && <p className="text-sm">{selected.reason}</p>}
+              <AttachmentViewer attachment={selected.attachment} />
+              {type === "report" && selected.status === "pending_owner_dept" && (
+                <div>
+                  <Label>Recommendation</Label>
+                  <Select value={recommendation} onValueChange={setRecommendation}>
+                    <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="repair">Repair</SelectItem>
+                      <SelectItem value="replace">Replace</SelectItem>
+                      <SelectItem value="dispose">Dispose</SelectItem>
+                      <SelectItem value="write-off">Write-off</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {selected.status === "pending_owner_dept" && (
+                <div>
+                  <Label>Notes</Label>
+                  <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Add notes" />
+                </div>
+              )}
+              {selected.timeline && <Timeline timeline={selected.timeline} />}
+            </div>
+          )}
+          {selected?.status === "pending_owner_dept" && (
+            <DialogFooter className="gap-2">
+              {type !== "report" && (
+                <Button variant="destructive" onClick={handleReject}><X className="w-4 h-4 mr-1" /> Reject</Button>
+              )}
+              <Button onClick={handleApprove}><Check className="w-4 h-4 mr-1" /> Approve & Forward</Button>
+            </DialogFooter>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+};

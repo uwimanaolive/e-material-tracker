@@ -1,5 +1,5 @@
 {
-  "name": "e-material-tracker",
+  "name": "assets-tracker",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -51,6 +51,7 @@
     "react-day-picker": "^9.11.1",
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.55.0",
+    "react-qr-code": "^2.2.0",
     "react-resizable-panels": "^2.1.7",
     "recharts": "^2.15.2",
     "sonner": "^2.0.7",

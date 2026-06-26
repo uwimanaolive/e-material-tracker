@@ -1,0 +1,31 @@
+{
+  "name": "assets-tracking-backend",
+  "version": "1.0.0",
+  "description": "Backend API for Assets Tracking System",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "migrate": "node src/database/migrate.js",
+    "seed": "node src/database/seed.js",
+    "patch": "node src/database/patch.js",
+    "patch2": "node src/database/patch2.js",
+    "patch3": "node src/database/patch3.js",
+    "patch4": "node src/database/patch4.js",
+    "reset-data": "node src/database/resetData.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-validator": "^7.0.1",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.2.0",
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
