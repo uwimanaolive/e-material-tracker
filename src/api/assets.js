@@ -15,8 +15,11 @@ export const assetsApi = {
     return await apiClient.get(`/assets/available/list${queryString ? `?${queryString}` : ''}`);
   },
 
-  getStoreForDepartment: async (department) => {
-    const query = department ? `?department=${encodeURIComponent(department)}` : '';
+  getStoreForDepartment: async (department, view = 'available') => {
+    const params = new URLSearchParams();
+    if (department) params.set('department', department);
+    if (view) params.set('view', view);
+    const query = params.toString() ? `?${params.toString()}` : '';
     return await apiClient.get(`/assets/store/department${query}`);
   },
 

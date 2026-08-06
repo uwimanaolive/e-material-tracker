@@ -43,7 +43,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
 });
 
 // Create category (procurement only)
-router.post('/', authenticateToken, authorizeRoles('procurement'), async (req, res) => {
+router.post('/', authenticateToken, authorizeRoles('inventory', 'super_admin'), async (req, res) => {
   try {
     const { name, description, specialist_department } = req.body;
     
@@ -68,7 +68,7 @@ router.post('/', authenticateToken, authorizeRoles('procurement'), async (req, r
 });
 
 // Update category
-router.put('/:id', authenticateToken, authorizeRoles('procurement'), async (req, res) => {
+router.put('/:id', authenticateToken, authorizeRoles('inventory', 'super_admin'), async (req, res) => {
   try {
     const { name, description, specialist_department } = req.body;
     

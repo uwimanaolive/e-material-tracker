@@ -1,8 +1,16 @@
 import express from 'express';
 import pool from '../src/config/database.js';
 import { authenticateToken, authorizeRoles } from '../src/middleware/auth.js';
-import { analyzeRequestItems } from '../src/utils/workflow.js';
-import { fulfillRequest, getAvailableAssetsForItem } from '../src/utils/fulfillment.js';
+import {
+  analyzeRequestItems,
+  initialRequestStatus,
+  STATUS_AFTER_OWNER_APPROVAL,
+} from '../src/utils/workflow.js';
+import {
+  deptAssignRequest,
+  inventoryConfirmRequest,
+  getAvailableAssetsForItem,
+} from '../src/utils/fulfillment.js';
 import { enrichRows, enrichWithStatusDisplay } from '../src/utils/statusLabels.js';
 
 const REQUEST_LIST_FIELDS = `
@@ -58,14 +66,16 @@ const enrichRequest = async (request) => {
     : { rows: [] };
   request.items = items.rows;
   for (const item of request.items) {
-    if (item.selected_asset_ids?.length) {
+    if (item.fulfilled_quantity > 0) {
       const assets = await pool.query(
-        'SELECT id, name, serial_number FROM assets WHERE id = ANY($1)',
-        [item.selected_asset_ids]
+        `SELECT a.id, a.name, a.serial_number FROM assets a
+         JOIN asset_assignments aa ON aa.asset_id = a.id
+         WHERE aa.request_item_id = $1`,
+        [item.id]
       );
-      item.selected_assets = assets.rows;
+      item.assigned_assets = assets.rows;
     } else {
-      item.selected_assets = [];
+      item.assigned_assets = [];
     }
   }
   request.timeline = timeline.rows;
@@ -86,7 +96,8 @@ const enrichRequest = async (request) => {
 router.get('/', authenticateToken, async (req, res) => {
   try {
     const { status, department } = req.query;
-    const role = req.user.role === 'specialist' ? 'head' : req.user.role;
+    let role = req.user.role === 'specialist' ? 'head' : req.user.role;
+    if (role === 'procurement') role = 'inventory';
     let query = `
       SELECT ar.*, u.name as requester_name, d.name as department_name,
         ae.name as assignee_name, COUNT(ari.id) as item_count
@@ -114,7 +125,7 @@ router.get('/', authenticateToken, async (req, res) => {
       n++;
       query += ` AND ar.assigned_to = $${n}`;
       params.push(req.user.id);
-    } else if (role !== 'procurement' && role !== 'hr') {
+    } else if (role !== 'inventory' && role !== 'hr' && role !== 'super_admin') {
       return res.status(403).json({ error: 'Insufficient permissions' });
     }
 
@@ -124,6 +135,25 @@ router.get('/', authenticateToken, async (req, res) => {
     res.json(enrichRows((await pool.query(query, params)).rows));
   } catch (error) {
     console.error('Get requests error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.get('/my', authenticateToken, authorizeRoles('head'), async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT ar.*, u.name as requester_name, d.name as department_name, ae.name as assignee_name,
+        (SELECT COUNT(*) FROM asset_request_items WHERE request_id = ar.id) as item_count
+       FROM asset_requests ar
+       LEFT JOIN users u ON ar.requested_by = u.id
+       LEFT JOIN users ae ON ar.assigned_to = ae.id
+       LEFT JOIN departments d ON ar.department_id = d.id
+       WHERE ar.requested_by = $1
+       ORDER BY ar.created_at DESC`,
+      [req.user.id]
+    );
+    res.json(enrichRows(result.rows));
+  } catch (error) {
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -143,25 +173,6 @@ router.get('/assigned-to-me', authenticateToken, authorizeRoles('employee'), asy
       [req.user.id]
     );
     res.json(enrichRows(result.rows));
-  } catch (error) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-router.get('/my', authenticateToken, authorizeRoles('head'), async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT ar.*, u.name as requester_name, d.name as department_name, ae.name as assignee_name,
-        (SELECT COUNT(*) FROM asset_request_items WHERE request_id = ar.id) as item_count
-       FROM asset_requests ar
-       LEFT JOIN users u ON ar.requested_by = u.id
-       LEFT JOIN users ae ON ar.assigned_to = ae.id
-       LEFT JOIN departments d ON ar.department_id = d.id
-       WHERE ar.requested_by = $1
-       ORDER BY ar.created_at DESC`,
-      [req.user.id]
-    );
-    res.json(result.rows);
   } catch (error) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -195,6 +206,30 @@ router.get('/owner/pending', authenticateToken, authorizeRoles('head'), async (r
   }
 });
 
+router.get('/dept-assignment/pending', authenticateToken, authorizeRoles('head'), async (req, res) => {
+  try {
+    const deptId = await getUserDeptId(req.user.id);
+    const result = await pool.query(
+      `SELECT DISTINCT ar.*, u.name as requester_name, d.name as department_name, ae.name as assignee_name,
+        (SELECT COUNT(*) FROM asset_request_items WHERE request_id = ar.id) as item_count
+        ${REQUEST_LIST_FIELDS}
+       FROM asset_requests ar
+       JOIN asset_request_items ari ON ar.id = ari.request_id
+       JOIN asset_categories ac ON ari.category_id = ac.id
+       LEFT JOIN users u ON ar.requested_by = u.id
+       LEFT JOIN users ae ON ar.assigned_to = ae.id
+       LEFT JOIN departments d ON ar.department_id = d.id
+       WHERE ar.status = 'pending_dept_assignment'
+         AND ac.specialist_department_id = $1
+       ORDER BY ar.created_at DESC`,
+      [deptId]
+    );
+    res.json(enrichRows(result.rows));
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 router.get('/owner/tracking', authenticateToken, authorizeRoles('head'), async (req, res) => {
   try {
     const deptId = await getUserDeptId(req.user.id);
@@ -208,7 +243,7 @@ router.get('/owner/tracking', authenticateToken, authorizeRoles('head'), async (
        LEFT JOIN users ae ON ar.assigned_to = ae.id
        LEFT JOIN departments d ON ar.department_id = d.id
        WHERE oa.owner_department_id = $1
-         AND ar.status IN ('pending_procurement', 'fulfilled', 'partially_fulfilled', 'rejected')
+         AND ar.status IN ('pending_dept_assignment', 'pending_inventory', 'fulfilled', 'partially_fulfilled', 'rejected')
        ORDER BY ar.updated_at DESC LIMIT 50`,
       [deptId]
     );
@@ -218,7 +253,7 @@ router.get('/owner/tracking', authenticateToken, authorizeRoles('head'), async (
   }
 });
 
-router.get('/procurement/pending', authenticateToken, authorizeRoles('procurement'), async (req, res) => {
+router.get('/inventory/pending', authenticateToken, authorizeRoles('inventory'), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT ar.*, u.name as requester_name, d.name as department_name, ae.name as assignee_name,
@@ -229,7 +264,7 @@ router.get('/procurement/pending', authenticateToken, authorizeRoles('procuremen
        LEFT JOIN users ae ON ar.assigned_to = ae.id
        LEFT JOIN departments d ON ar.department_id = d.id
        LEFT JOIN asset_request_items ari ON ar.id = ari.request_id
-       WHERE ar.status = 'pending_procurement'
+       WHERE ar.status IN ('pending_inventory', 'pending_procurement')
        GROUP BY ar.id, u.name, d.name, ae.name ORDER BY ar.created_at DESC`
     );
     res.json(enrichRows(result.rows));
@@ -238,7 +273,7 @@ router.get('/procurement/pending', authenticateToken, authorizeRoles('procuremen
   }
 });
 
-router.get('/procurement/history', authenticateToken, authorizeRoles('procurement'), async (req, res) => {
+router.get('/inventory/history', authenticateToken, authorizeRoles('inventory'), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT ar.*, u.name as requester_name, d.name as department_name, ae.name as assignee_name,
@@ -248,7 +283,7 @@ router.get('/procurement/history', authenticateToken, authorizeRoles('procuremen
        LEFT JOIN users u ON ar.requested_by = u.id
        LEFT JOIN users ae ON ar.assigned_to = ae.id
        LEFT JOIN departments d ON ar.department_id = d.id
-       WHERE ar.status IN ('fulfilled', 'partially_fulfilled', 'rejected', 'approved')
+       WHERE ar.status IN ('fulfilled', 'partially_fulfilled', 'rejected')
        ORDER BY ar.updated_at DESC LIMIT 50`
     );
     res.json(enrichRows(result.rows));
@@ -257,18 +292,51 @@ router.get('/procurement/history', authenticateToken, authorizeRoles('procuremen
   }
 });
 
-router.get('/:id/available-assets', authenticateToken, authorizeRoles('procurement'), async (req, res) => {
+// Legacy procurement paths → inventory
+router.get('/procurement/pending', authenticateToken, authorizeRoles('inventory'), async (req, res) => {
+  req.url = '/inventory/pending';
+  const result = await pool.query(
+    `SELECT ar.*, u.name as requester_name, d.name as department_name, ae.name as assignee_name,
+      COUNT(ari.id) as item_count ${REQUEST_LIST_FIELDS}
+     FROM asset_requests ar
+     LEFT JOIN users u ON ar.requested_by = u.id
+     LEFT JOIN users ae ON ar.assigned_to = ae.id
+     LEFT JOIN departments d ON ar.department_id = d.id
+     LEFT JOIN asset_request_items ari ON ar.id = ari.request_id
+     WHERE ar.status IN ('pending_inventory', 'pending_procurement')
+     GROUP BY ar.id, u.name, d.name, ae.name ORDER BY ar.created_at DESC`
+  );
+  res.json(enrichRows(result.rows));
+});
+router.get('/procurement/history', authenticateToken, authorizeRoles('inventory'), async (req, res) => {
+  const result = await pool.query(
+    `SELECT ar.*, u.name as requester_name, d.name as department_name, ae.name as assignee_name,
+      (SELECT COUNT(*) FROM asset_request_items WHERE request_id = ar.id) as item_count ${REQUEST_LIST_FIELDS}
+     FROM asset_requests ar
+     LEFT JOIN users u ON ar.requested_by = u.id
+     LEFT JOIN users ae ON ar.assigned_to = ae.id
+     LEFT JOIN departments d ON ar.department_id = d.id
+     WHERE ar.status IN ('fulfilled', 'partially_fulfilled', 'rejected')
+     ORDER BY ar.updated_at DESC LIMIT 50`
+  );
+  res.json(enrichRows(result.rows));
+});
+
+router.get('/:id/available-assets', authenticateToken, authorizeRoles('head', 'inventory'), async (req, res) => {
   const client = await pool.connect();
   try {
     const reqRow = await client.query('SELECT department_id FROM asset_requests WHERE id = $1', [req.params.id]);
     if (!reqRow.rows.length) return res.status(404).json({ error: 'Request not found' });
+    const headDeptId = req.user.role === 'head' ? await getUserDeptId(req.user.id) : null;
     const items = await client.query(
       'SELECT id, category_id, quantity, fulfilled_quantity FROM asset_request_items WHERE request_id = $1',
       [req.params.id]
     );
     const result = {};
     for (const item of items.rows) {
-      result[item.id] = await getAvailableAssetsForItem(client, item.category_id, reqRow.rows[0].department_id);
+      result[item.id] = await getAvailableAssetsForItem(
+        client, item.category_id, reqRow.rows[0].department_id, headDeptId
+      );
     }
     res.json(result);
   } catch (error) {
@@ -314,55 +382,79 @@ router.post('/', authenticateToken, authorizeRoles('head'), async (req, res) => 
     if (!assignee.rows.length) throw new Error('Assignee must be an active employee in your department');
 
     const requestNumber = await generateRequestNumber();
+    const { needsOwnerApproval } = await analyzeRequestItems(client, requesterDeptId, items);
+    const status = initialRequestStatus(needsOwnerApproval);
+
     const requestResult = await client.query(
       `INSERT INTO asset_requests (request_number, requested_by, department_id, assigned_to, justification, urgency, status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending_procurement') RETURNING *`,
-      [requestNumber, req.user.id, requesterDeptId, assigned_to, justification, urgency,]
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [requestNumber, req.user.id, requesterDeptId, assigned_to, justification, urgency, status]
     );
     const requestId = requestResult.rows[0].id;
 
     for (const item of items) {
-      const cat = await client.query('SELECT id FROM asset_categories WHERE name = $1', [item.category]);
-      if (!cat.rows.length) throw new Error(`Category "${item.category}" not found`);
-      const assetIds = item.asset_ids || (item.asset_id ? [item.asset_id] : []);
-      if (assetIds.length > 0) {
-        const qty = parseInt(item.quantity) || 1;
-        if (assetIds.length !== qty) {
-          throw new Error(`Select exactly ${qty} asset(s) for ${item.category}`);
-        }
-        for (const aid of assetIds) {
-          const avail = await client.query(
-            "SELECT id FROM assets WHERE id = $1 AND category_id = $2 AND status = 'available'",
-            [aid, cat.rows[0].id]
-          );
-          if (!avail.rows.length) throw new Error(`Asset ${aid} is not available for ${item.category}`);
-        }
+      const cat = await client.query(
+        'SELECT id FROM asset_categories WHERE name = $1',
+        [item.category]
+      );
+
+      if (!cat.rows.length) {
+        throw new Error(`Category "${item.category}" not found`);
       }
+
       await client.query(
-        `INSERT INTO asset_request_items (request_id, category_id, asset_id, quantity, specifications, selected_asset_ids)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [requestId, cat.rows[0].id, assetIds[0] || null, item.quantity, item.specifications, assetIds.length ? assetIds : []]
+        `INSERT INTO asset_request_items
+        (request_id, category_id, quantity, specifications)
+        VALUES ($1, $2, $3, $4)`,
+        [
+          requestId,
+          cat.rows[0].id,
+          item.quantity,
+          item.specifications || ''
+        ]
       );
     }
 
-    const { needsOwnerApproval } = await analyzeRequestItems(client, requesterDeptId, items);
-    const status = needsOwnerApproval ? 'pending_owner_dept' : 'pending_procurement';
-    await client.query('UPDATE asset_requests SET status = $1 WHERE id = $2', [status, requestId]);
 
-    const assigneeName = await client.query('SELECT name FROM users WHERE id = $1', [assigned_to]);
-    await addTimelineEntry(client, requestId, req.user.id, req.user.role,
+    const assigneeName = await client.query(
+      'SELECT name FROM users WHERE id = $1',
+      [assigned_to]
+    );
+
+
+    await addTimelineEntry(
+      client,
+      requestId,
+      req.user.id,
+      req.user.role,
       needsOwnerApproval
         ? `Request submitted for ${assigneeName.rows[0].name} — awaiting owning department approval`
-        : `Request submitted for ${assigneeName.rows[0].name} — forwarded to procurement`,
-      justification);
+        : `Request submitted for ${assigneeName.rows[0].name} — awaiting department store assignment`,
+      justification
+    );
+
 
     await client.query('COMMIT');
-    res.status(201).json({ ...requestResult.rows[0], status });
+
+    res.status(201).json({
+      ...requestResult.rows[0],
+      status
+    });
+
+
   } catch (error) {
+
     await client.query('ROLLBACK');
-    res.status(500).json({ error: error.message || 'Server error' });
+
+    res.status(500).json({
+      error: error.message || 'Server error'
+    });
+
+
   } finally {
+
     client.release();
+
   }
 });
 
@@ -406,8 +498,8 @@ router.put('/:id/owner-action', authenticateToken, authorizeRoles('head'), async
       const allApproved = ownerDeptIds.every((id) => approvedSet.has(id));
 
       if (allApproved) {
-        await client.query('UPDATE asset_requests SET status = $1 WHERE id = $2', ['pending_procurement', req.params.id]);
-        await addTimelineEntry(client, req.params.id, req.user.id, req.user.role, 'All owning departments approved — forwarded to procurement', notes);
+        await client.query('UPDATE asset_requests SET status = $1 WHERE id = $2', [STATUS_AFTER_OWNER_APPROVAL, req.params.id]);
+        await addTimelineEntry(client, req.params.id, req.user.id, req.user.role, 'All owning departments approved — awaiting store assignment', notes);
       } else {
         await addTimelineEntry(client, req.params.id, req.user.id, req.user.role, 'Owning department approved — awaiting other owning departments', notes);
       }
@@ -425,31 +517,59 @@ router.put('/:id/owner-action', authenticateToken, authorizeRoles('head'), async
   }
 });
 
-router.put('/:id/procurement-action', authenticateToken, authorizeRoles('procurement'), async (req, res) => {
+router.put('/:id/dept-assign', authenticateToken, authorizeRoles('head'), async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { action, notes, fulfillments } = req.body;
-
-    if (action === 'reject') {
-      const reqRow = await client.query('SELECT status FROM asset_requests WHERE id = $1', [req.params.id]);
-      if (reqRow.rows[0]?.status !== 'pending_procurement') throw new Error('Request is not pending procurement');
-      await client.query('UPDATE asset_requests SET status = $1 WHERE id = $2', ['rejected', req.params.id]);
-      await addTimelineEntry(client, req.params.id, req.user.id, req.user.role, 'Procurement rejected', notes);
-      await client.query('COMMIT');
-      return res.json({ message: 'Request rejected' });
-    }
-
-    if (req.body.assigned_to) {
-      await client.query('UPDATE asset_requests SET assigned_to = $1 WHERE id = $2', [req.body.assigned_to, req.params.id]);
-    }
-
-    const { totalAssigned, allFulfilled, newStatus, actionMsg } = await fulfillRequest(
+    const { fulfillments, notes } = req.body;
+    const { totalAssigned, actionMsg } = await deptAssignRequest(
       client, req.params.id, fulfillments || [], req.user.id, req.user.role, notes
     );
     await addTimelineEntry(client, req.params.id, req.user.id, req.user.role, actionMsg, notes);
     await client.query('COMMIT');
-    res.json({ message: allFulfilled ? 'Request fulfilled and assets assigned' : 'Partially fulfilled', totalAssigned, status: newStatus });
+    res.json({ message: actionMsg, totalAssigned });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: error.message || 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+router.put('/:id/inventory-action', authenticateToken, authorizeRoles('inventory'), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { action, notes } = req.body;
+    if (!notes?.trim()) throw new Error('Comment is required');
+
+    const { newStatus, actionMsg } = await inventoryConfirmRequest(
+      client, req.params.id, action, req.user.id, notes
+    );
+    await addTimelineEntry(client, req.params.id, req.user.id, req.user.role, actionMsg, notes);
+    await client.query('COMMIT');
+    res.json({ message: actionMsg, status: newStatus });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: error.message || 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+router.put('/:id/procurement-action', authenticateToken, authorizeRoles('inventory'), async (req, res) => {
+  req.body.action = req.body.action || 'approve';
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { action, notes } = req.body;
+    if (!notes?.trim()) throw new Error('Comment is required');
+    const { newStatus, actionMsg } = await inventoryConfirmRequest(
+      client, req.params.id, action, req.user.id, notes
+    );
+    await addTimelineEntry(client, req.params.id, req.user.id, req.user.role, actionMsg, notes);
+    await client.query('COMMIT');
+    res.json({ message: actionMsg, status: newStatus });
   } catch (error) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: error.message || 'Server error' });

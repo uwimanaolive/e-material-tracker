@@ -1,7 +1,7 @@
 import express from 'express';
 import pool from '../src/config/database.js';
 import { authenticateToken, authorizeRoles } from '../src/middleware/auth.js';
-import { nextStatusAfterHeadApproval, getAssetOwnerDeptId } from '../src/utils/workflow.js';
+import { nextStatusAfterHseApproval, getAssetOwnerDeptId } from '../src/utils/workflow.js';
 import { enrichRows } from '../src/utils/statusLabels.js';
 import multer from 'multer';
 import path from 'path';
@@ -168,7 +168,7 @@ router.get('/owner/tracking', authenticateToken, authorizeRoles('head'), async (
        LEFT JOIN users u ON ir.reported_by = u.id
        LEFT JOIN departments d ON u.department_id = d.id
        WHERE ac.specialist_department_id = (SELECT department_id FROM users WHERE id = $1)
-         AND ir.status IN ('pending_procurement', 'resolved', 'rejected')
+         AND ir.status IN ('pending_inventory', 'pending_procurement', 'resolved', 'rejected')
          AND EXISTS (
            SELECT 1 FROM issue_timeline it
            WHERE it.issue_report_id = ir.id AND it.action LIKE '%Owning department assessed%'
@@ -182,10 +182,10 @@ router.get('/owner/tracking', authenticateToken, authorizeRoles('head'), async (
   }
 });
 
-router.get('/procurement/history', authenticateToken, authorizeRoles('procurement'), async (req, res) => {
+router.get('/hse/pending', authenticateToken, authorizeRoles('hse'), async (req, res) => {
   try {
     const result = await pool.query(
-      `${IR_BASE} ORDER BY ir.updated_at DESC LIMIT 100`
+      `${IR_BASE} WHERE ir.status = 'pending_hse' ORDER BY ir.created_at DESC`
     );
     res.json(enrichRows(result.rows));
   } catch (error) {
@@ -193,17 +193,37 @@ router.get('/procurement/history', authenticateToken, authorizeRoles('procuremen
   }
 });
 
-// Get pending issue reports for procurement resolution
-router.get('/procurement/pending', authenticateToken, authorizeRoles('procurement'), async (req, res) => {
+router.get('/inventory/pending', authenticateToken, authorizeRoles('inventory'), async (req, res) => {
   try {
     const result = await pool.query(
-      `${IR_BASE} WHERE ir.status = 'pending_procurement' ORDER BY ir.created_at DESC`
+      `${IR_BASE} WHERE ir.status IN ('pending_inventory', 'pending_procurement') ORDER BY ir.created_at DESC`
     );
     res.json(enrichRows(result.rows));
   } catch (error) {
-    console.error('Get procurement pending issue reports error:', error);
     res.status(500).json({ error: 'Server error' });
   }
+});
+
+router.get('/inventory/history', authenticateToken, authorizeRoles('inventory'), async (req, res) => {
+  try {
+    const result = await pool.query(`${IR_BASE} ORDER BY ir.updated_at DESC LIMIT 100`);
+    res.json(enrichRows(result.rows));
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+router.get('/procurement/history', authenticateToken, authorizeRoles('inventory'), async (req, res) => {
+  const result = await pool.query(`${IR_BASE} ORDER BY ir.updated_at DESC LIMIT 100`);
+  res.json(enrichRows(result.rows));
+});
+
+// Get pending issue reports for inventory resolution
+router.get('/procurement/pending', authenticateToken, authorizeRoles('inventory'), async (req, res) => {
+  const result = await pool.query(
+    `${IR_BASE} WHERE ir.status IN ('pending_inventory', 'pending_procurement') ORDER BY ir.created_at DESC`
+  );
+  res.json(enrichRows(result.rows));
 });
 
 // Get issue report by ID with timeline
@@ -279,41 +299,72 @@ router.post('/', authenticateToken, authorizeRoles('employee'), upload.single('a
   }
 });
 
-// Acknowledge issue report (head)
+// Department head review (approve/reject → HSE)
 router.put('/:id/head-action', authenticateToken, authorizeRoles('head'), async (req, res) => {
   const client = await pool.connect();
-  
   try {
     await client.query('BEGIN');
-    
-    const { notes } = req.body;
-    
-    const reportResult = await client.query('SELECT * FROM issue_reports WHERE id = $1', [req.params.id]);
-    if (reportResult.rows.length === 0) {
-      throw new Error('Issue report not found');
-    }
-    
-    const report = reportResult.rows[0];
-    const empDept = await client.query('SELECT department_id FROM users WHERE id = $1', [report.reported_by]);
-    const nextStatus = await nextStatusAfterHeadApproval(client, report.asset_id, empDept.rows[0].department_id);
-    const ownerDeptId = await getAssetOwnerDeptId(client, report.asset_id);
-    let ownerName = '';
-    if (ownerDeptId) {
-      const od = await client.query('SELECT name FROM departments WHERE id = $1', [ownerDeptId]);
-      ownerName = od.rows[0]?.name || '';
-    }
+    const { action, notes } = req.body;
+    if (!notes?.trim()) throw new Error('Comment is required');
 
-    await client.query('UPDATE issue_reports SET status = $1 WHERE id = $2', [nextStatus, req.params.id]);
-    const msg = nextStatus === 'pending_owner_dept'
-      ? `Acknowledged — forwarded to ${ownerName} Department for assessment`
-      : 'Acknowledged — forwarded to Procurement Department';
-    await addTimelineEntry(client, req.params.id, req.user.id, req.user.role, msg, notes);
-    
+    const reportResult = await client.query('SELECT * FROM issue_reports WHERE id = $1', [req.params.id]);
+    if (!reportResult.rows.length) throw new Error('Issue report not found');
+    if (reportResult.rows[0].status !== 'pending_head') throw new Error('Report is not awaiting department head review');
+
+    if (action === 'approve') {
+      await client.query('UPDATE issue_reports SET status = $1 WHERE id = $2', ['pending_hse', req.params.id]);
+      await addTimelineEntry(client, req.params.id, req.user.id, req.user.role,
+        'Department head approved — forwarded to HSE', notes);
+    } else {
+      await client.query('UPDATE issue_reports SET status = $1 WHERE id = $2', ['rejected', req.params.id]);
+      await addTimelineEntry(client, req.params.id, req.user.id, req.user.role, 'Department head rejected', notes);
+    }
     await client.query('COMMIT');
     res.json({ message: 'Issue report updated successfully' });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Head action error:', error);
+    res.status(500).json({ error: error.message || 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// HSE review (approve/reject)
+router.put('/:id/hse-action', authenticateToken, authorizeRoles('hse'), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { action, notes } = req.body;
+    if (!notes?.trim()) throw new Error('Comment is required');
+
+    const reportResult = await client.query('SELECT * FROM issue_reports WHERE id = $1', [req.params.id]);
+    if (!reportResult.rows.length) throw new Error('Issue report not found');
+    if (reportResult.rows[0].status !== 'pending_hse') throw new Error('Report is not awaiting HSE review');
+
+    const report = reportResult.rows[0];
+
+    if (action === 'approve') {
+      const empDept = await client.query('SELECT department_id FROM users WHERE id = $1', [report.reported_by]);
+      const nextStatus = await nextStatusAfterHseApproval(client, report.asset_id, empDept.rows[0].department_id);
+      const ownerDeptId = await getAssetOwnerDeptId(client, report.asset_id);
+      let ownerName = '';
+      if (ownerDeptId) {
+        const od = await client.query('SELECT name FROM departments WHERE id = $1', [ownerDeptId]);
+        ownerName = od.rows[0]?.name || '';
+      }
+      await client.query('UPDATE issue_reports SET status = $1 WHERE id = $2', [nextStatus, req.params.id]);
+      const msg = nextStatus === 'pending_owner_dept'
+        ? `HSE approved — forwarded to ${ownerName} Department for assessment`
+        : 'HSE approved — forwarded to Inventory Department';
+      await addTimelineEntry(client, req.params.id, req.user.id, req.user.role, msg, notes);
+    } else {
+      await client.query('UPDATE issue_reports SET status = $1 WHERE id = $2', ['rejected', req.params.id]);
+      await addTimelineEntry(client, req.params.id, req.user.id, req.user.role, 'HSE rejected', notes);
+    }
+    await client.query('COMMIT');
+    res.json({ message: 'Issue report updated' });
+  } catch (error) {
+    await client.query('ROLLBACK');
     res.status(500).json({ error: error.message || 'Server error' });
   } finally {
     client.release();
@@ -326,9 +377,10 @@ router.put('/:id/owner-action', authenticateToken, authorizeRoles('head'), async
   try {
     await client.query('BEGIN');
     const { assessment_notes, recommendation } = req.body;
+    if (!assessment_notes?.trim()) throw new Error('Comment is required');
     await client.query(
       'UPDATE issue_reports SET status = $1, assessment_recommendation = $2 WHERE id = $3',
-      ['pending_procurement', recommendation, req.params.id]
+      ['pending_inventory', recommendation, req.params.id]
     );
     await addTimelineEntry(client, req.params.id, req.user.id, req.user.role,
       `Owning department assessed — Recommendation: ${recommendation}`, assessment_notes);
@@ -342,15 +394,16 @@ router.put('/:id/owner-action', authenticateToken, authorizeRoles('head'), async
   }
 });
 
-// Resolve issue report (procurement)
-router.put('/:id/procurement-action', authenticateToken, authorizeRoles('procurement'), async (req, res) => {
+// Resolve issue report (inventory)
+router.put('/:id/inventory-action', authenticateToken, authorizeRoles('inventory'), async (req, res) => {
   const client = await pool.connect();
   
   try {
     await client.query('BEGIN');
     
     const { resolution_outcome, resolution_notes } = req.body;
-    
+    if (!resolution_notes?.trim()) throw new Error('Comment is required');
+
     const reportResult = await client.query('SELECT * FROM issue_reports WHERE id = $1', [req.params.id]);
     if (reportResult.rows.length === 0) {
       throw new Error('Issue report not found');
@@ -383,17 +436,23 @@ router.put('/:id/procurement-action', authenticateToken, authorizeRoles('procure
     }
     
     await client.query('UPDATE issue_reports SET status = $1, resolution_outcome = $2, resolution_notes = $3 WHERE id = $4', ['resolved', resolution_outcome, resolution_notes, req.params.id]);
-    await addTimelineEntry(client, req.params.id, req.user.id, req.user.role, `Procurement resolved - Outcome: ${resolution_outcome}`, resolution_notes);
+    await addTimelineEntry(client, req.params.id, req.user.id, req.user.role, `Inventory resolved — Outcome: ${resolution_outcome}`, resolution_notes);
     
     await client.query('COMMIT');
     res.json({ message: 'Issue report resolved successfully' });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Procurement action error:', error);
     res.status(500).json({ error: error.message || 'Server error' });
   } finally {
     client.release();
   }
+});
+
+router.put('/:id/procurement-action', authenticateToken, authorizeRoles('inventory'), async (req, res, next) => {
+  req.url = req.url.replace('procurement-action', 'inventory-action');
+  const layer = router.stack.find((r) => r.route?.path === '/:id/inventory-action');
+  if (layer) return layer.route.stack[0].handle(req, res, next);
+  res.status(404).json({ error: 'Not found' });
 });
 
 export default router;

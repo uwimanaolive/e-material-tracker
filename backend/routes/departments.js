@@ -3,7 +3,8 @@ import pool from '../src/config/database.js';
 import { authenticateToken, authorizeRoles } from '../src/middleware/auth.js';
 
 const router = express.Router();
-const HR_ROLES = authorizeRoles('hr', 'procurement');
+const INVENTORY_ROLES = authorizeRoles('inventory');
+const HR_ROLES = authorizeRoles('hr', 'inventory', 'super_admin');
 
 // Get all departments with staff counts
 router.get('/', authenticateToken, async (req, res) => {
@@ -103,7 +104,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Create department (HR or procurement)
+// Create department
 router.post('/', authenticateToken, HR_ROLES, async (req, res) => {
   try {
     const { name, description } = req.body;

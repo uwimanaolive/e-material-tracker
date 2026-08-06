@@ -19,6 +19,7 @@ import { toast } from "sonner";
 
 export const HeadIncoming = () => {
   const [requests, setRequests] = React.useState([]);
+  const [deptAssignRequests, setDeptAssignRequests] = React.useState([]);
   const [gatePasses, setGatePasses] = React.useState([]);
   const [reports, setReports] = React.useState([]);
   const [trackRequests, setTrackRequests] = React.useState([]);
@@ -28,14 +29,17 @@ export const HeadIncoming = () => {
   const [type, setType] = React.useState(null);
   const [notes, setNotes] = React.useState("");
   const [recommendation, setRecommendation] = React.useState("");
+  const [availableAssets, setAvailableAssets] = React.useState({});
+  const [selectedAssets, setSelectedAssets] = React.useState({});
   const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => { loadAll(); }, []);
 
   const loadAll = async () => {
     try {
-      const [r, g, ir, tr, tg, tir] = await Promise.all([
+      const [r, da, g, ir, tr, tg, tir] = await Promise.all([
         requestsApi.getOwnerPending(),
+        requestsApi.getDeptAssignmentPending(),
         gatePassesApi.getOwnerPending(),
         issueReportsApi.getOwnerPending(),
         requestsApi.getOwnerTracking(),
@@ -43,6 +47,7 @@ export const HeadIncoming = () => {
         issueReportsApi.getOwnerTracking(),
       ]);
       setRequests(r);
+      setDeptAssignRequests(da);
       setGatePasses(g);
       setReports(ir);
       setTrackRequests(tr);
@@ -59,15 +64,53 @@ export const HeadIncoming = () => {
     try {
       let detail = item;
       if (itemType === "request") detail = await requestsApi.getById(item.id);
+      if (itemType === "deptassign") {
+        detail = await requestsApi.getById(item.id);
+        try {
+          const assets = await requestsApi.getAvailableAssets(item.id);
+          setAvailableAssets(assets);
+        } catch (assetError) {
+          setAvailableAssets({});
+          toast.error(assetError.message || "Could not load available assets for assignment");
+        }
+        const initial = {};
+        detail.items?.forEach((i) => { initial[i.id] = []; });
+        setSelectedAssets(initial);
+      }
       if (itemType === "gatepass") detail = await gatePassesApi.getById(item.id);
       if (itemType === "report") detail = await issueReportsApi.getById(item.id);
       setSelected(detail);
       setType(itemType);
       setNotes("");
       setRecommendation("");
-    } catch {
-      toast.error("Failed to load details");
+    } catch (error) {
+      toast.error(error.message || "Failed to load details");
     }
+  };
+
+  const handleDeptAssign = async () => {
+    try {
+      const fulfillments = Object.entries(selectedAssets)
+        .filter(([, ids]) => ids.length > 0)
+        .map(([request_item_id, asset_ids]) => ({ request_item_id: parseInt(request_item_id), asset_ids }));
+      const result = await requestsApi.deptAssign(selected.id, { fulfillments, notes });
+      toast.success(result?.message || "Store assignment submitted");
+      setSelected(null);
+      loadAll();
+    } catch (error) {
+      toast.error(error.message || "Assignment failed");
+    }
+  };
+
+  const toggleAsset = (itemId, assetId) => {
+    setSelectedAssets((prev) => {
+      const current = prev[itemId] || [];
+      const item = selected?.items?.find((i) => i.id === itemId);
+      const maxQty = item ? item.quantity - (item.fulfilled_quantity || 0) : 1;
+      if (current.includes(assetId)) return { ...prev, [itemId]: current.filter((id) => id !== assetId) };
+      if (current.length >= maxQty) { toast.error(`Maximum ${maxQty} asset(s)`); return prev; }
+      return { ...prev, [itemId]: [...current, assetId] };
+    });
   };
 
   const handleApprove = async () => {
@@ -75,7 +118,7 @@ export const HeadIncoming = () => {
       if (type === "request") await requestsApi.ownerAction(selected.id, { action: "approve", notes });
       if (type === "gatepass") await gatePassesApi.ownerAction(selected.id, { action: "approve", notes });
       if (type === "report") await issueReportsApi.ownerAction(selected.id, { assessment_notes: notes, recommendation });
-      toast.success("Approved — forwarded to procurement");
+      if (type !== "deptassign") toast.success("Approved — forwarded to Inventory");
       setSelected(null);
       loadAll();
     } catch (error) {
@@ -124,15 +167,25 @@ export const HeadIncoming = () => {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Incoming Approvals</h1>
-        <p className="text-muted-foreground">Review cross-department requests and track items awaiting procurement</p>
+        <p className="text-muted-foreground">Review cross-department requests, assign store assets, and track items with Inventory</p>
       </div>
 
       <Tabs defaultValue="requests">
         <TabsList>
-          <TabsTrigger value="requests">Requests ({requests.length})</TabsTrigger>
+          <TabsTrigger value="deptassign">Store Assignment ({deptAssignRequests.length})</TabsTrigger>
+          <TabsTrigger value="requests">Approvals ({requests.length})</TabsTrigger>
           <TabsTrigger value="gatepasses">Gate Passes ({gatePasses.length})</TabsTrigger>
           <TabsTrigger value="reports">Issue Reports ({reports.length})</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="deptassign">
+          <Card>
+            <CardHeader><CardTitle>Assign Store Assets Before Inventory Approval</CardTitle></CardHeader>
+            <CardContent>
+              <ItemTable data={deptAssignRequests} t="deptassign" cols={["Request #", "From Dept", "Date"]} />
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         {[
           { key: "requests", pending: requests, tracking: trackRequests, type: "request", cols: ["Request #", "From Dept", "Date"] },
@@ -147,7 +200,7 @@ export const HeadIncoming = () => {
             <Card>
               <CardHeader><CardTitle className="flex items-center gap-2"><Clock className="w-5 h-5" /> Tracking — After Your Approval</CardTitle></CardHeader>
               <CardContent>
-                <p className="text-sm text-muted-foreground mb-4">Items you approved that are now with procurement or completed</p>
+                <p className="text-sm text-muted-foreground mb-4">Items you approved that are now with Inventory or completed</p>
                 <ItemTable data={tracking} t={t} cols={cols} showReview={true} />
               </CardContent>
             </Card>
@@ -169,10 +222,29 @@ export const HeadIncoming = () => {
               {type === "request" && selected.items?.length > 0 && (
                 <ul className="text-sm text-muted-foreground space-y-1">
                   {selected.items.map((item, i) => (
-                    <li key={i}>• {item.quantity}x {item.category_name}{item.selected_assets?.length ? ` (${item.selected_assets.map((a) => a.name).join(", ")})` : ""}</li>
+                    <li key={i}>• {item.quantity}x {item.category_name}</li>
                   ))}
                 </ul>
               )}
+              {type === "deptassign" && selected.items?.map((item) => {
+                const assets = availableAssets[item.id] || [];
+                const remaining = item.quantity - (item.fulfilled_quantity || 0);
+                return (
+                  <div key={item.id} className="border rounded p-2 space-y-2">
+                    <p className="font-medium text-sm">{item.quantity}x {item.category_name} ({remaining} to assign)</p>
+                    {assets.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No available assets — skip to forward empty</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1">
+                        {assets.map((a) => (
+                          <Button key={a.id} size="sm" variant={(selectedAssets[item.id] || []).includes(a.id) ? "default" : "outline"}
+                            onClick={() => toggleAsset(item.id, a.id)}>{a.name}</Button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
               {selected.description && <p className="text-sm">{selected.description}</p>}
               {selected.reason && <p className="text-sm">{selected.reason}</p>}
               <AttachmentViewer attachment={selected.attachment} />
@@ -199,12 +271,18 @@ export const HeadIncoming = () => {
               {selected.timeline && <Timeline timeline={selected.timeline} />}
             </div>
           )}
-          {selected?.status === "pending_owner_dept" && (
+          {selected?.status === "pending_owner_dept" && type !== "deptassign" && (
             <DialogFooter className="gap-2">
               {type !== "report" && (
                 <Button variant="destructive" onClick={handleReject}><X className="w-4 h-4 mr-1" /> Reject</Button>
               )}
               <Button onClick={handleApprove}><Check className="w-4 h-4 mr-1" /> Approve & Forward</Button>
+            </DialogFooter>
+          )}
+          {type === "deptassign" && selected?.status === "pending_dept_assignment" && (
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => { setSelected(null); }}>Cancel</Button>
+              <Button onClick={handleDeptAssign}><Check className="w-4 h-4 mr-1" /> Submit Assignment</Button>
             </DialogFooter>
           )}
         </DialogContent>

@@ -53,10 +53,11 @@ export const HeadReports = () => {
     }
   };
 
-  const handleAcknowledge = async () => {
+  const handleAcknowledge = async (action) => {
+    if (!ackNotes.trim()) { toast.error("Comment is required"); return; }
     try {
-      await issueReportsApi.headAction(selectedReport.id, { notes: ackNotes });
-      toast.success("Report acknowledged and forwarded");
+      await issueReportsApi.headAction(selectedReport.id, { action, notes: ackNotes });
+      toast.success(action === "approve" ? "Approved — forwarded to HSE" : "Rejected");
       setSelectedReport(null);
       loadReports();
     } catch (error) {
@@ -134,7 +135,7 @@ export const HeadReports = () => {
       <Dialog open={!!selectedReport} onOpenChange={(o) => !o && setSelectedReport(null)}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Acknowledge Issue Report</DialogTitle>
+            <DialogTitle>Review Issue Report</DialogTitle>
             <DialogDescription>{selectedReport?.report_number}</DialogDescription>
           </DialogHeader>
           {selectedReport && (
@@ -142,8 +143,11 @@ export const HeadReports = () => {
               <StatusBadge status={selectedReport.status} item={selectedReport} />
               <p className="text-sm">{selectedReport.description}</p>
               <AttachmentViewer attachment={selectedReport.attachment} />
-              <Textarea value={ackNotes} onChange={(e) => setAckNotes(e.target.value)} placeholder="Acknowledgement notes" />
-              <Button onClick={handleAcknowledge} className="w-full"><Check className="w-4 h-4 mr-2" />Acknowledge & Forward</Button>
+              <Textarea value={ackNotes} onChange={(e) => setAckNotes(e.target.value)} placeholder="Required comment" />
+              <div className="flex gap-2">
+                <Button variant="destructive" className="flex-1" onClick={() => handleAcknowledge("reject")}>Reject</Button>
+                <Button className="flex-1" onClick={() => handleAcknowledge("approve")}><Check className="w-4 h-4 mr-2" />Approve & Forward to HSE</Button>
+              </div>
             </div>
           )}
         </DialogContent>

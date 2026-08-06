@@ -14,6 +14,7 @@ import assignmentRoutes from './routes/assignments.js';
 import gatePassRoutes from './routes/gatePasses.js';
 import issueReportRoutes from './routes/issueReports.js';
 import dashboardRoutes from './routes/dashboard.js';
+import adminRoutes from './routes/admin.js';
 
 dotenv.config();
 
@@ -71,6 +72,7 @@ app.use('/api/assignments', assignmentRoutes);
 app.use('/api/gate-passes', gatePassRoutes);
 app.use('/api/issue-reports', issueReportRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

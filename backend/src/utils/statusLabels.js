@@ -6,14 +6,19 @@ export function getStatusDisplay(status, ctx = {}) {
   switch (status) {
     case 'pending_head':
       return reporter ? `Awaiting ${reporter} Head` : 'Awaiting Department Head';
+    case 'pending_hse':
+      return 'Awaiting HSE Review';
     case 'pending_owner_dept':
     case 'pending_specialist':
       return owner ? `Awaiting ${owner} Department` : 'Awaiting Owning Department';
+    case 'pending_dept_assignment':
+      return owner ? `Awaiting ${owner} — Store Assignment` : 'Awaiting Department Store Assignment';
+    case 'pending_inventory':
     case 'pending_procurement':
     case 'specialist_approved':
-      return 'Awaiting Procurement Department';
+      return 'Awaiting Inventory Department';
     case 'approved':
-      return 'Approved by Procurement';
+      return 'Approved by Inventory';
     case 'fulfilled':
       return 'Fulfilled — Assets Assigned';
     case 'partially_fulfilled':
@@ -25,9 +30,9 @@ export function getStatusDisplay(status, ctx = {}) {
         ? `Resolved — ${String(ctx.resolution_outcome).replace(/_/g, ' ')}`
         : 'Resolved';
     case 'active':
-      return 'Active — Gate Pass Issued';
+      return ctx.no_return ? 'Active — Permanent Transfer' : 'Active — Gate Pass Issued';
     case 'closed':
-      return 'Closed — Returned';
+      return ctx.no_return ? 'Closed — Permanent Move Complete' : 'Closed — Returned';
     default:
       return status?.replace(/_/g, ' ') || 'Unknown';
   }

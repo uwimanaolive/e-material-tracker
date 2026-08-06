@@ -5,8 +5,17 @@ import { authenticateToken, authorizeRoles } from '../src/middleware/auth.js';
 
 const router = express.Router();
 
-// Get all users
-router.get('/', authenticateToken, async (req, res) => {
+function normalizeUserRow(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    role: row.role === 'procurement' ? 'inventory' : row.role,
+    department: row.department === 'Procurement' ? 'Inventory' : row.department,
+  };
+}
+
+// Get all users (HR / inventory / super admin)
+router.get('/', authenticateToken, authorizeRoles('hr', 'inventory', 'super_admin', 'head'), async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT u.id, u.name, u.username, u.email, r.name as role, d.name as department, u.is_active, u.created_at 
@@ -15,7 +24,7 @@ router.get('/', authenticateToken, async (req, res) => {
        LEFT JOIN departments d ON u.department_id = d.id 
        ORDER BY u.name`
     );
-    res.json(result.rows);
+    res.json(result.rows.map(normalizeUserRow));
   } catch (error) {
     console.error('Get users error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -34,7 +43,7 @@ router.get('/department/:departmentId', authenticateToken, async (req, res) => {
        ORDER BY u.name`,
       [req.params.departmentId]
     );
-    res.json(result.rows);
+    res.json(result.rows.map(normalizeUserRow));
   } catch (error) {
     console.error('Get department users error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -57,7 +66,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
     
-    res.json(result.rows[0]);
+    res.json(normalizeUserRow(result.rows[0]));
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -65,13 +74,14 @@ router.get('/:id', authenticateToken, async (req, res) => {
 });
 
 // Create user (HR or procurement)
-router.post('/', authenticateToken, authorizeRoles('hr', 'procurement'), async (req, res) => {
+router.post('/', authenticateToken, authorizeRoles('hr', 'inventory', 'super_admin'), async (req, res) => {
   try {
     const { name, username, password, email, role, department } = req.body;
     
     const passwordHash = await bcrypt.hash(password, 10);
     
-    const roleResult = await pool.query('SELECT id FROM roles WHERE name = $1', [role]);
+    const roleName = role === 'procurement' ? 'inventory' : role;
+    const roleResult = await pool.query('SELECT id FROM roles WHERE name = $1', [roleName]);
     const deptResult = await pool.query('SELECT id FROM departments WHERE name = $1', [department]);
     
     if (roleResult.rows.length === 0 || deptResult.rows.length === 0) {
@@ -94,7 +104,7 @@ router.post('/', authenticateToken, authorizeRoles('hr', 'procurement'), async (
 });
 
 // Update user (HR or procurement)
-router.put('/:id', authenticateToken, authorizeRoles('hr', 'procurement'), async (req, res) => {
+router.put('/:id', authenticateToken, authorizeRoles('hr', 'inventory', 'super_admin'), async (req, res) => {
   try {
     const { name, email, role, department, is_active } = req.body;
     
@@ -104,7 +114,8 @@ router.put('/:id', authenticateToken, authorizeRoles('hr', 'procurement'), async
     
     if (role) {
       paramCount++;
-      const roleResult = await pool.query('SELECT id FROM roles WHERE name = $1', [role]);
+      const roleName = role === 'procurement' ? 'inventory' : role;
+    const roleResult = await pool.query('SELECT id FROM roles WHERE name = $1', [roleName]);
       if (roleResult.rows.length > 0) {
         query += `, role_id = $${paramCount}`;
         params.push(roleResult.rows[0].id);

@@ -12,6 +12,33 @@ const addAssignmentHistory = async (pool, assignmentId, assetId, fromUser, toUse
   );
 };
 
+// Department asset summary by category
+router.get('/department/summary', authenticateToken, authorizeRoles('head'), async (req, res) => {
+  try {
+    const departmentName = req.query.department || req.user.department;
+    const deptResult = await pool.query('SELECT id FROM departments WHERE name = $1', [departmentName]);
+    if (!deptResult.rows.length) return res.status(400).json({ error: 'Department not found' });
+    const deptId = deptResult.rows[0].id;
+
+    const result = await pool.query(
+      `SELECT ac.name as category_name, ac.id as category_id,
+        COUNT(aa.id) as total_assigned,
+        COUNT(aa.id) FILTER (WHERE a.status = 'assigned') as active_count,
+        COUNT(aa.id) FILTER (WHERE a.condition IN ('fair', 'poor')) as needs_attention
+       FROM asset_categories ac
+       LEFT JOIN assets a ON a.category_id = ac.id
+       LEFT JOIN asset_assignments aa ON aa.asset_id = a.id AND aa.department_id = $1 AND aa.status = 'active'
+       GROUP BY ac.id, ac.name
+       HAVING COUNT(aa.id) > 0
+       ORDER BY ac.name`,
+      [deptId]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // Get all assignments
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -158,7 +185,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
 });
 
 // Create assignment (head or procurement)
-router.post('/', authenticateToken, authorizeRoles('head', 'procurement'), async (req, res) => {
+router.post('/', authenticateToken, authorizeRoles('head', 'inventory'), async (req, res) => {
   const client = await pool.connect();
   
   try {
@@ -263,7 +290,7 @@ router.put('/:id/reassign', authenticateToken, authorizeRoles('head'), async (re
 });
 
 // Return asset (head or procurement)
-router.put('/:id/return', authenticateToken, authorizeRoles('head', 'procurement'), async (req, res) => {
+router.put('/:id/return', authenticateToken, authorizeRoles('head', 'inventory'), async (req, res) => {
   const client = await pool.connect();
   
   try {
@@ -282,10 +309,10 @@ router.put('/:id/return', authenticateToken, authorizeRoles('head', 'procurement
     await client.query('UPDATE asset_assignments SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2', ['returned', req.params.id]);
     
     // Update asset status
-    await client.query('UPDATE assets SET status = $1, current_location = $2 WHERE id = $3', ['available', 'Procurement Store', assignment.asset_id]);
+    await client.query('UPDATE assets SET status = $1, current_location = $2 WHERE id = $3', ['available', 'Inventory Store', assignment.asset_id]);
     
     // Add history
-    await addAssignmentHistory(client, req.params.id, assignment.asset_id, assignment.assigned_to, null, req.user.id, 'Returned to Procurement', notes);
+    await addAssignmentHistory(client, req.params.id, assignment.asset_id, assignment.assigned_to, null, req.user.id, 'Returned to Inventory', notes);
     
     await client.query('COMMIT');
     

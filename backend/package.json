@@ -13,6 +13,7 @@
     "patch2": "node src/database/patch2.js",
     "patch3": "node src/database/patch3.js",
     "patch4": "node src/database/patch4.js",
+    "patch5": "node src/database/patch5.js",
     "reset-data": "node src/database/resetData.js"
   },
   "dependencies": {

@@ -20,7 +20,7 @@ import { toast } from "sonner";
 import { Link } from "wouter";
 import { Badge } from "../../components/ui/badge";
 
-const emptyItem = () => ({ category: "", quantity: 1, specifications: "", asset_ids: [] });
+const emptyItem = () => ({ category: "", quantity: 1, specifications: "" });
 
 export const HeadRequests = () => {
   const { currentUser } = useStore();
@@ -83,35 +83,9 @@ export const HeadRequests = () => {
 
   const updateItem = (index, field, value) => {
     const items = [...form.items];
-    if (field === "category") {
-      items[index] = { ...items[index], category: value, asset_ids: [] };
-    } else if (field === "quantity") {
-      items[index] = { ...items[index], quantity: value, asset_ids: [] };
-    } else {
-      items[index] = { ...items[index], [field]: value };
-    }
+    items[index] = { ...items[index], [field]: value };
     setForm({ ...form, items });
   };
-
-  const toggleItemAsset = (index, assetId) => {
-    const items = [...form.items];
-    const item = items[index];
-    const qty = parseInt(item.quantity) || 1;
-    const ids = item.asset_ids || [];
-    if (ids.includes(assetId)) {
-      item.asset_ids = ids.filter((id) => id !== assetId);
-    } else {
-      if (ids.length >= qty) {
-        toast.error(`Select at most ${qty} asset(s) for this line`);
-        return;
-      }
-      item.asset_ids = [...ids, assetId];
-    }
-    setForm({ ...form, items });
-  };
-
-  const assetsForCategory = (categoryName) =>
-    storeItems.filter((a) => a.category_name === categoryName);
 
   const addItem = () => setForm({ ...form, items: [...form.items, emptyItem()] });
   const removeItem = (index) => {
@@ -129,17 +103,6 @@ export const HeadRequests = () => {
       return;
     }
 
-    for (const item of form.items) {
-      const available = assetsForCategory(item.category);
-      if (available.length > 0) {
-        const qty = parseInt(item.quantity) || 1;
-        if ((item.asset_ids?.length || 0) !== qty) {
-          toast.error(`Select exactly ${qty} asset(s) from the store for ${item.category}`);
-          return;
-        }
-      }
-    }
-
     setSubmitting(true);
     try {
       await requestsApi.create({
@@ -151,7 +114,6 @@ export const HeadRequests = () => {
           category: i.category,
           quantity: parseInt(i.quantity) || 1,
           specifications: i.specifications,
-          asset_ids: i.asset_ids || [],
         })),
       });
       toast.success("Asset request submitted");
@@ -191,7 +153,7 @@ export const HeadRequests = () => {
       {storeSummary.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Procurement Store — Available for {currentUser.department}</CardTitle>
+            <CardTitle className="text-sm font-medium">Inventory Store — Available for {currentUser.department}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap gap-2">
@@ -248,10 +210,10 @@ export const HeadRequests = () => {
       </Card>
 
       <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>New Asset Request</DialogTitle>
-            <DialogDescription>Request equipment from procurement and assign it to a department employee</DialogDescription>
+            <DialogDescription>Request equipment by category — owning department will assign from store</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
@@ -297,29 +259,10 @@ export const HeadRequests = () => {
                   )}
                   <Select value={item.category} onValueChange={(v) => updateItem(index, "category", v)}>
                     <SelectTrigger><SelectValue placeholder="Category" /></SelectTrigger>
-                    <SelectContent>
+                    <SelectContent position="popper" side="bottom" align="start" className="max-h-60">
                       {categories.map((c) => (<SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>))}
                     </SelectContent>
                   </Select>
-                  {item.category && assetsForCategory(item.category).length > 0 && (
-                    <div>
-                      <Label className="text-xs">Select from available store ({item.asset_ids?.length || 0}/{item.quantity})</Label>
-                      <div className="flex flex-wrap gap-1.5 mt-1">
-                        {assetsForCategory(item.category).map((a) => {
-                          const sel = (item.asset_ids || []).includes(a.id);
-                          return (
-                            <Button key={a.id} type="button" size="sm" variant={sel ? "default" : "outline"}
-                              onClick={() => toggleItemAsset(index, a.id)}>
-                              {a.name}{a.serial_number ? ` (${a.serial_number})` : ""}
-                            </Button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                  {item.category && assetsForCategory(item.category).length === 0 && (
-                    <p className="text-xs text-amber-600">No store items available — procurement will assign when stock arrives</p>
-                  )}
                   <div className="grid grid-cols-4 gap-2">
                     <Input type="number" min={1} value={item.quantity} onChange={(e) => updateItem(index, "quantity", e.target.value)} placeholder="Qty" />
                     <Input className="col-span-3" value={item.specifications} onChange={(e) => updateItem(index, "specifications", e.target.value)} placeholder="Specifications (optional)" />

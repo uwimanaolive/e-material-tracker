@@ -1,19 +1,11 @@
 import { apiClient } from './client.js';
 
 export const dashboardApi = {
-  getEmployeeStats: async () => {
-    return await apiClient.get('/dashboard/employee');
-  },
-
-  getHeadStats: async () => {
-    return await apiClient.get('/dashboard/head');
-  },
-
-  getProcurementStats: async () => {
-    return await apiClient.get('/dashboard/procurement');
-  },
-
-  getHrStats: async () => {
-    return await apiClient.get('/dashboard/hr');
-  },
+  getEmployeeStats: () => apiClient.get('/dashboard/employee'),
+  getHeadStats: () => apiClient.get('/dashboard/head'),
+  getInventoryStats: () => apiClient.get('/dashboard/inventory'),
+  getProcurementStats: () => apiClient.get('/dashboard/inventory'),
+  getHseStats: () => apiClient.get('/dashboard/hse'),
+  getHrStats: () => apiClient.get('/dashboard/hr'),
+  getAdminStats: () => apiClient.get('/admin/stats'),
 };

@@ -234,7 +234,7 @@ export const HRDepartments = () => {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Store Categories — {selectedDept?.name}</DialogTitle>
-            <DialogDescription>Select which asset categories this department can see in the procurement store</DialogDescription>
+            <DialogDescription>Select which asset categories this department can see in the inventory store</DialogDescription>
           </DialogHeader>
           <div className="space-y-2 max-h-64 overflow-y-auto">
             {categories.map((cat) => (

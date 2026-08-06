@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Label } from "../../components/ui/label";
 import { Textarea } from "../../components/ui/textarea";
 import { Input } from "../../components/ui/input";
+import { Checkbox } from "../../components/ui/checkbox";
 import { format } from "date-fns";
 import { GatePassCard } from "../../components/GatePassCard";
 import { toast } from "sonner";
@@ -33,6 +34,7 @@ export const EmployeeGatePasses = () => {
     reason: "",
     departure_date: "",
     expected_return_date: "",
+    no_return: false,
     notes: "",
   });
 
@@ -72,6 +74,7 @@ export const EmployeeGatePasses = () => {
       reason: "",
       departure_date: "",
       expected_return_date: "",
+      no_return: false,
       notes: "",
     });
     setIsCreateOpen(true);
@@ -80,6 +83,10 @@ export const EmployeeGatePasses = () => {
   const handleSubmit = async () => {
     if (!form.asset_id || !form.to_location || !form.reason || !form.departure_date) {
       toast.error("Please fill in all required fields");
+      return;
+    }
+    if (!form.no_return && !form.expected_return_date) {
+      toast.error("Expected return date is required unless permanent move is selected");
       return;
     }
 
@@ -91,7 +98,8 @@ export const EmployeeGatePasses = () => {
         to_location: form.to_location,
         reason: form.reason,
         departure_date: form.departure_date,
-        expected_return_date: form.expected_return_date || null,
+        expected_return_date: form.no_return ? null : form.expected_return_date,
+        no_return: form.no_return,
         notes: form.notes,
       });
       toast.success("Gate pass request submitted");
@@ -240,8 +248,16 @@ export const EmployeeGatePasses = () => {
               </div>
               <div>
                 <Label>Expected Return</Label>
-                <Input type="date" value={form.expected_return_date} onChange={(e) => setForm({ ...form, expected_return_date: e.target.value })} />
+                <Input type="date" value={form.expected_return_date} disabled={form.no_return}
+                  onChange={(e) => setForm({ ...form, expected_return_date: e.target.value })} />
               </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Checkbox id="no_return" checked={form.no_return}
+                onCheckedChange={(v) => setForm({ ...form, no_return: !!v, expected_return_date: v ? "" : form.expected_return_date })} />
+              <Label htmlFor="no_return" className="font-normal cursor-pointer">
+                Permanent move — no return (asset will not come back)
+              </Label>
             </div>
             <div>
               <Label>Notes</Label>

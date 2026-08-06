@@ -19,9 +19,16 @@ export const authenticateToken = (req, res, next) => {
 
 export const authorizeRoles = (...roles) => {
   return (req, res, next) => {
-    const role = req.user.role === 'specialist' ? 'head' : req.user.role;
-    const allowed = roles.flatMap((r) => (r === 'head' ? ['head', 'specialist'] : [r]));
-    if (!allowed.includes(role) && !allowed.includes(req.user.role)) {
+    let role = req.user.role === 'specialist' ? 'head' : req.user.role;
+    // Legacy procurement JWT → inventory
+    if (role === 'procurement') role = 'inventory';
+    const expanded = roles.flatMap((r) => {
+      if (r === 'head') return ['head', 'specialist'];
+      if (r === 'inventory') return ['inventory', 'procurement'];
+      return [r];
+    });
+    const userRole = req.user.role === 'procurement' ? 'inventory' : req.user.role;
+    if (!expanded.includes(role) && !expanded.includes(userRole) && !expanded.includes(req.user.role)) {
       return res.status(403).json({ error: 'Insufficient permissions' });
     }
     next();

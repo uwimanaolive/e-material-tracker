@@ -45,7 +45,7 @@ export const HRDashboard = () => {
         </div>
         <div className="flex gap-2">
           <Link href="/hr/departments"><Button variant="outline">Departments</Button></Link>
-          <Link href="/hr/employees"><Button>Register Employee</Button></Link>
+          <Link href="/hr/employees"><Button>All Users</Button></Link>
         </div>
       </div>
 

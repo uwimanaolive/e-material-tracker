@@ -3,7 +3,10 @@ import { Badge } from "./ui/badge";
 
 const STATUS_COLORS = {
   pending_head: "bg-amber-100 text-amber-800 border-amber-200",
+  pending_hse: "bg-orange-100 text-orange-800 border-orange-200",
   pending_owner_dept: "bg-orange-100 text-orange-800 border-orange-200",
+  pending_dept_assignment: "bg-purple-100 text-purple-800 border-purple-200",
+  pending_inventory: "bg-blue-100 text-blue-800 border-blue-200",
   pending_procurement: "bg-blue-100 text-blue-800 border-blue-200",
   approved: "bg-emerald-100 text-emerald-800 border-emerald-200",
   fulfilled: "bg-emerald-100 text-emerald-800 border-emerald-200",
@@ -18,7 +21,6 @@ const STATUS_COLORS = {
 
 export function getStatusLabel(status, item) {
   const ctx = item ?? {};
-
   if (ctx.status_display) return ctx.status_display;
 
   const owner = ctx.owner_department_name;
@@ -27,14 +29,19 @@ export function getStatusLabel(status, item) {
   switch (status) {
     case 'pending_head':
       return reporter ? `Awaiting ${reporter} Head` : 'Awaiting Department Head';
+    case 'pending_hse':
+      return 'Awaiting HSE Review';
     case 'pending_owner_dept':
     case 'pending_specialist':
       return owner ? `Awaiting ${owner} Department` : 'Awaiting Owning Department';
+    case 'pending_dept_assignment':
+      return owner ? `Awaiting ${owner} — Store Assignment` : 'Awaiting Department Store Assignment';
+    case 'pending_inventory':
     case 'pending_procurement':
     case 'specialist_approved':
-      return 'Awaiting Procurement Department';
+      return 'Awaiting Inventory Department';
     case 'approved':
-      return 'Approved by Procurement';
+      return 'Approved by Inventory';
     case 'fulfilled':
       return 'Fulfilled — Assets Assigned';
     case 'partially_fulfilled':
@@ -46,9 +53,9 @@ export function getStatusLabel(status, item) {
         ? `Resolved — ${String(ctx.resolution_outcome).replace(/_/g, ' ')}`
         : 'Resolved';
     case 'active':
-      return 'Active — Gate Pass Issued';
+      return ctx.no_return ? 'Active — Permanent Transfer' : 'Active — Gate Pass Issued';
     case 'closed':
-      return 'Closed — Returned';
+      return ctx.no_return ? 'Closed — Permanent Move Complete' : 'Closed — Returned';
     default:
       return status?.replace(/_/g, ' ') || 'Unknown';
   }

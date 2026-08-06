@@ -5,6 +5,7 @@ import { authApi } from "../api/auth";
 import { Shield, Eye, EyeOff, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
 import logo from "../assets/logo.webp";
+import { getRoleBasePath } from "../utils/roleRoutes";
 
 export const Login = () => {
   const [, setLocation] = useLocation();
@@ -17,8 +18,7 @@ export const Login = () => {
 
   React.useEffect(() => {
     if (currentUser?.role) {
-      const role = currentUser.role === "specialist" ? "head" : currentUser.role;
-      setLocation(`/${role}`);
+      setLocation(getRoleBasePath(currentUser.role));
     }
   }, [currentUser, setLocation]);
 
@@ -41,8 +41,7 @@ export const Login = () => {
         throw new Error("Invalid login response from server");
       }
       setCurrentUser(response.user);
-      const role = response.user.role === "specialist" ? "head" : response.user.role;
-      setLocation(`/${role}`);
+      setLocation(getRoleBasePath(response.user.role));
     } catch (err) {
       setError(err.message || "Invalid username or password.");
     } finally {

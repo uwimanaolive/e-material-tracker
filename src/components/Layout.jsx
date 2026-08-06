@@ -1,11 +1,12 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
 import { useStore } from "../store";
-import { Menu, Home, AlertTriangle, CheckSquare, Users, Monitor, LogOut, FileText, Building, Inbox } from "lucide-react";
+import { Menu, Home, AlertTriangle, CheckSquare, Users, Monitor, LogOut, FileText, Building, Inbox, Shield, Settings, Package } from "lucide-react";
 import { Button } from "./ui/button";
 import { Avatar, AvatarFallback } from "./ui/avatar";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "./ui/sheet";
 import logo from "../assets/logo.webp";
+import { getRoleKey } from "../utils/roleRoutes";
 
 const navConfig = {
   employee: [
@@ -21,29 +22,31 @@ const navConfig = {
     { label: "Assignments", href: "/head/assignments", icon: Users },
     { label: "Incoming Approvals", href: "/head/incoming", icon: Inbox },
     { label: "Gate Pass Approvals", href: "/head/gate-passes", icon: FileText },
-    { label: "Procurement Store", href: "/head/store", icon: Monitor },
+    { label: "Inventory Store", href: "/head/store", icon: Package },
     { label: "Issue Reports", href: "/head/reports", icon: AlertTriangle },
   ],
-  specialist: [
-    { label: "Dashboard", href: "/head", icon: Home },
-    { label: "Incoming Approvals", href: "/head/incoming", icon: Inbox },
-    { label: "Department Assets", href: "/head/assets", icon: Monitor },
-    { label: "Asset Requests", href: "/head/requests", icon: CheckSquare },
-    { label: "Gate Pass Approvals", href: "/head/gate-passes", icon: FileText },
-    { label: "Issue Reports", href: "/head/reports", icon: AlertTriangle },
+  inventory: [
+    { label: "Dashboard", href: "/inventory", icon: Home },
+    { label: "Assets & Categories", href: "/inventory/assets", icon: Monitor },
+    { label: "Asset Requests", href: "/inventory/requests", icon: CheckSquare },
+    { label: "Assignments", href: "/inventory/assignments", icon: Users },
+    { label: "Gate Passes", href: "/inventory/gate-passes", icon: FileText },
+    { label: "Issue Reports", href: "/inventory/reports", icon: AlertTriangle },
   ],
-  procurement: [
-    { label: "Dashboard", href: "/procurement", icon: Home },
-    { label: "Inventory", href: "/procurement/inventory", icon: Monitor },
-    { label: "Asset Requests", href: "/procurement/requests", icon: CheckSquare },
-    { label: "Assignments", href: "/procurement/assignments", icon: Users },
-    { label: "Gate Passes", href: "/procurement/gate-passes", icon: FileText },
-    { label: "Issue Reports", href: "/procurement/reports", icon: AlertTriangle },
+  hse: [
+    { label: "Dashboard", href: "/hse", icon: Home },
+    { label: "Issue Reviews", href: "/hse/reports", icon: Shield },
   ],
   hr: [
     { label: "Dashboard", href: "/hr", icon: Home },
     { label: "Departments", href: "/hr/departments", icon: Building },
     { label: "Employees", href: "/hr/employees", icon: Users },
+  ],
+  super_admin: [
+    { label: "Dashboard", href: "/admin", icon: Home },
+    { label: "HR Users", href: "/admin/hr-users", icon: Users },
+    { label: "Departments", href: "/admin/departments", icon: Building },
+    { label: "Categories", href: "/admin/categories", icon: Settings },
   ],
 };
 
@@ -79,7 +82,7 @@ export const Layout = ({ children }) => {
 
   if (!currentUser) return null;
 
-  const roleKey = currentUser.role === "specialist" ? "head" : currentUser.role;
+  const roleKey = getRoleKey(currentUser.role);
   const links = navConfig[roleKey] || navConfig.employee;
   const initials = (currentUser.name || currentUser.username || "?")
     .split(" ")
@@ -98,9 +101,11 @@ export const Layout = ({ children }) => {
     switch (role) {
       case "employee": return "bg-primary text-primary-foreground";
       case "head": return "bg-accent text-accent-foreground";
-      case "specialist": return "bg-purple-500 text-white";
+      case "inventory":
       case "procurement": return "bg-emerald-500 text-white";
+      case "hse": return "bg-orange-500 text-white";
       case "hr": return "bg-blue-600 text-white";
+      case "super_admin": return "bg-violet-600 text-white";
       default: return "bg-slate-500 text-white";
     }
   };
@@ -140,7 +145,7 @@ export const Layout = ({ children }) => {
             <div className="flex items-center gap-3 text-sm">
               <div className="text-right hidden sm:block">
                 <p className="font-semibold text-foreground leading-none">{currentUser.name}</p>
-                <p className="text-xs text-muted-foreground mt-1 capitalize">{currentUser.role} • {currentUser.department}</p>
+                <p className="text-xs text-muted-foreground mt-1 capitalize">{roleKey.replace("_", " ")} • {currentUser.department}</p>
               </div>
               <Avatar className="h-9 w-9 border border-border">
                 <AvatarFallback className={`${getRoleColor(currentUser.role)} font-semibold text-xs`}>

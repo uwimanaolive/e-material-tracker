@@ -29,4 +29,9 @@ export const assignmentsApi = {
   return: async (id, data) => {
     return await apiClient.put(`/assignments/${id}/return`, data);
   },
+
+  getDepartmentSummary: async (department) => {
+    const qs = department ? `?department=${encodeURIComponent(department)}` : '';
+    return await apiClient.get(`/assignments/department/summary${qs}`);
+  },
 };

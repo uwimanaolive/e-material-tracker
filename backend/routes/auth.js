@@ -32,7 +32,7 @@ router.post('/login', async (req, res) => {
     }
     
     const token = jwt.sign(
-      { id: user.id, role: user.role_name, department: user.department_name },
+      { id: user.id, role: user.role_name === 'procurement' ? 'inventory' : user.role_name, department: user.department_name },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
@@ -43,7 +43,7 @@ router.post('/login', async (req, res) => {
         id: user.id,
         name: user.name,
         username: user.username,
-        role: user.role_name,
+        role: user.role_name === 'procurement' ? 'inventory' : user.role_name,
         department: user.department_name
       }
     });
@@ -68,8 +68,12 @@ router.get('/me', authenticateToken, async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
-    res.json(result.rows[0]);
+
+    const user = result.rows[0];
+    if (user.role === 'procurement') user.role = 'inventory';
+    if (user.department === 'Procurement') user.department = 'Inventory';
+
+    res.json(user);
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json({ error: 'Server error' });
