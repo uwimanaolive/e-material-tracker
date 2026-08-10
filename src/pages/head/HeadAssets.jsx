@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { StatusBadge } from "../../components/StatusBadge";
 import { Monitor, Package } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
+import { safeFormatDate } from "@/utils/formatDate";
 
 export const HeadAssets = () => {
   const { currentUser } = useStore();
@@ -33,26 +34,19 @@ export const HeadAssets = () => {
     }
   };
 
-  const filtered = filterCategory
-    ? assignments.filter((a) => summary.find((s) => s.category_name === filterCategory))
-    : assignments;
-
   const displayAssignments = filterCategory
-    ? assignments.filter((a) => {
-        const cat = summary.find((s) => s.category_name === filterCategory);
-        return cat && a.asset_name;
-      })
+    ? assignments.filter((a) => a.category_name === filterCategory)
     : assignments;
 
   if (loading) return <div className="p-6">Loading...</div>;
 
-  const totalAssets = summary.reduce((n, s) => n + parseInt(s.total_assigned || 0), 0);
+  const totalAssets = summary.reduce((n, s) => n + parseInt(s.total_assigned || 0, 10), 0);
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Department Assets</h1>
-        <p className="text-muted-foreground">Assets assigned to {currentUser.department}</p>
+        <p className="text-muted-foreground">Assets assigned to employees in {currentUser.department}</p>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
@@ -79,7 +73,7 @@ export const HeadAssets = () => {
               <p className="text-3xl font-bold">{s.total_assigned}</p>
               <div className="flex gap-1 mt-2 flex-wrap">
                 <Badge variant="secondary" className="text-xs">{s.active_count} active</Badge>
-                {parseInt(s.needs_attention) > 0 && (
+                {parseInt(s.needs_attention, 10) > 0 && (
                   <Badge variant="destructive" className="text-xs">{s.needs_attention} attention</Badge>
                 )}
               </div>
@@ -97,12 +91,13 @@ export const HeadAssets = () => {
         </CardHeader>
         <CardContent>
           {displayAssignments.length === 0 ? (
-            <p className="text-muted-foreground py-8 text-center">No assets assigned to department</p>
+            <p className="text-muted-foreground py-8 text-center">No assets assigned to this department</p>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Asset</TableHead>
+                  <TableHead>Category</TableHead>
                   <TableHead>Serial Number</TableHead>
                   <TableHead>Assigned To</TableHead>
                   <TableHead>Assigned Date</TableHead>
@@ -113,9 +108,10 @@ export const HeadAssets = () => {
                 {displayAssignments.map((assignment) => (
                   <TableRow key={assignment.id}>
                     <TableCell className="font-medium">{assignment.asset_name}</TableCell>
+                    <TableCell>{assignment.category_name || "—"}</TableCell>
                     <TableCell>{assignment.serial_number}</TableCell>
                     <TableCell>{assignment.assigned_to_name}</TableCell>
-                    <TableCell>{new Date(assignment.assigned_date).toLocaleDateString()}</TableCell>
+                    <TableCell>{safeFormatDate(assignment.assigned_date)}</TableCell>
                     <TableCell><StatusBadge status={assignment.status} /></TableCell>
                   </TableRow>
                 ))}

@@ -176,7 +176,16 @@ export const InventoryRequests = () => {
                     <Badge variant="outline">{item.fulfilled_quantity || 0}/{item.quantity} assigned</Badge>
                   </div>
                   {item.assigned_assets?.length > 0 && (
-                    <p className="text-xs text-emerald-700">Assigned: {item.assigned_assets.map((a) => a.name).join(", ")}</p>
+                    <ul className="text-xs text-emerald-700 space-y-1">
+                      {item.assigned_assets.map((a) => (
+                        <li key={a.id}>
+                          {a.name}
+                          {a.serial_number && ` (SN: ${a.serial_number})`}
+                          {" → "}
+                          {a.assigned_to_name || selectedRequest.assignee_name}
+                        </li>
+                      ))}
+                    </ul>
                   )}
                   {item.specifications && <p className="text-xs text-muted-foreground">{item.specifications}</p>}
                 </div>

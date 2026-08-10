@@ -48,7 +48,8 @@ const getUserDeptId = async (userId) => {
 
 const enrichRequest = async (request) => {
   const items = await pool.query(
-    `SELECT ari.*, ac.name as category_name, od.name as owner_department_name
+    `SELECT ari.*, ac.name as category_name, ac.specialist_department_id as owner_department_id,
+            od.name as owner_department_name
      FROM asset_request_items ari
      LEFT JOIN asset_categories ac ON ari.category_id = ac.id
      LEFT JOIN departments od ON ac.specialist_department_id = od.id
@@ -66,17 +67,15 @@ const enrichRequest = async (request) => {
     : { rows: [] };
   request.items = items.rows;
   for (const item of request.items) {
-    if (item.fulfilled_quantity > 0) {
-      const assets = await pool.query(
-        `SELECT a.id, a.name, a.serial_number FROM assets a
-         JOIN asset_assignments aa ON aa.asset_id = a.id
-         WHERE aa.request_item_id = $1`,
-        [item.id]
-      );
-      item.assigned_assets = assets.rows;
-    } else {
-      item.assigned_assets = [];
-    }
+    const assets = await pool.query(
+      `SELECT a.id, a.name, a.serial_number, a.condition, u.name as assigned_to_name
+       FROM assets a
+       JOIN asset_assignments aa ON aa.asset_id = a.id AND aa.status = 'active'
+       LEFT JOIN users u ON aa.assigned_to = u.id
+       WHERE aa.request_item_id = $1`,
+      [item.id]
+    );
+    item.assigned_assets = assets.rows;
   }
   request.timeline = timeline.rows;
   request.assignee_name = assignee.rows[0]?.name || null;
@@ -219,8 +218,8 @@ router.get('/dept-assignment/pending', authenticateToken, authorizeRoles('head')
        LEFT JOIN users u ON ar.requested_by = u.id
        LEFT JOIN users ae ON ar.assigned_to = ae.id
        LEFT JOIN departments d ON ar.department_id = d.id
-       WHERE ar.status = 'pending_dept_assignment'
-         AND ac.specialist_department_id = $1
+       WHERE ac.specialist_department_id = $1
+         AND ar.status IN ('pending_dept_assignment', 'pending_inventory', 'pending_procurement')
        ORDER BY ar.created_at DESC`,
       [deptId]
     );
@@ -329,13 +328,23 @@ router.get('/:id/available-assets', authenticateToken, authorizeRoles('head', 'i
     if (!reqRow.rows.length) return res.status(404).json({ error: 'Request not found' });
     const headDeptId = req.user.role === 'head' ? await getUserDeptId(req.user.id) : null;
     const items = await client.query(
-      'SELECT id, category_id, quantity, fulfilled_quantity FROM asset_request_items WHERE request_id = $1',
+      `SELECT ari.id, ari.category_id, ari.quantity, ari.fulfilled_quantity, ac.specialist_department_id
+       FROM asset_request_items ari
+       JOIN asset_categories ac ON ari.category_id = ac.id
+       WHERE ari.request_id = $1`,
       [req.params.id]
     );
     const result = {};
     for (const item of items.rows) {
+      if (headDeptId && item.specialist_department_id !== headDeptId) {
+        continue;
+      }
       result[item.id] = await getAvailableAssetsForItem(
-        client, item.category_id, reqRow.rows[0].department_id, headDeptId
+        client,
+        item.category_id,
+        reqRow.rows[0].department_id,
+        headDeptId,
+        { requestId: parseInt(req.params.id, 10), requestItemId: item.id }
       );
     }
     res.json(result);
@@ -463,6 +472,7 @@ router.put('/:id/owner-action', authenticateToken, authorizeRoles('head'), async
   try {
     await client.query('BEGIN');
     const { action, notes } = req.body;
+    if (!notes?.trim()) throw new Error('Comment is required');
     const reqRow = await client.query('SELECT * FROM asset_requests WHERE id = $1 FOR UPDATE', [req.params.id]);
     if (!reqRow.rows.length) throw new Error('Request not found');
     if (reqRow.rows[0].status !== 'pending_owner_dept') throw new Error('Request is not awaiting owner department approval');
@@ -522,8 +532,29 @@ router.put('/:id/dept-assign', authenticateToken, authorizeRoles('head'), async 
   try {
     await client.query('BEGIN');
     const { fulfillments, notes } = req.body;
+    if (!notes?.trim()) throw new Error('Comment is required');
     const { totalAssigned, actionMsg } = await deptAssignRequest(
-      client, req.params.id, fulfillments || [], req.user.id, req.user.role, notes
+      client, req.params.id, fulfillments || [], req.user.id, req.user.role, notes, { replace: false }
+    );
+    await addTimelineEntry(client, req.params.id, req.user.id, req.user.role, actionMsg, notes);
+    await client.query('COMMIT');
+    res.json({ message: actionMsg, totalAssigned });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: error.message || 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+router.put('/:id/dept-assign-update', authenticateToken, authorizeRoles('head'), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { fulfillments, notes } = req.body;
+    if (!notes?.trim()) throw new Error('Comment is required');
+    const { totalAssigned, actionMsg } = await deptAssignRequest(
+      client, req.params.id, fulfillments || [], req.user.id, req.user.role, notes, { replace: true }
     );
     await addTimelineEntry(client, req.params.id, req.user.id, req.user.role, actionMsg, notes);
     await client.query('COMMIT');

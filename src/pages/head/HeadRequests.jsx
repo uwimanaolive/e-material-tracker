@@ -297,9 +297,22 @@ export const HeadRequests = () => {
                   <p className="text-sm font-medium mb-2">Items</p>
                   <ul className="text-sm text-muted-foreground space-y-1">
                     {selectedRequest.items.map((item, i) => (
-                      <li key={i}>• {item.fulfilled_quantity || 0}/{item.quantity}x {item.category_name}
+                      <li key={i} className="space-y-1">
+                        • {item.fulfilled_quantity || 0}/{item.quantity}x {item.category_name}
                         {item.owner_department_name && item.owner_department_name !== currentUser.department && (
                           <span className="text-xs"> (owned by {item.owner_department_name})</span>
+                        )}
+                        {item.assigned_assets?.length > 0 && (
+                          <ul className="ml-4 text-xs text-emerald-700 space-y-0.5">
+                            {item.assigned_assets.map((a) => (
+                              <li key={a.id}>
+                                {a.name}
+                                {a.serial_number && ` (SN: ${a.serial_number})`}
+                                {" → "}
+                                {a.assigned_to_name || selectedRequest.assignee_name}
+                              </li>
+                            ))}
+                          </ul>
                         )}
                       </li>
                     ))}

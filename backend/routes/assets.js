@@ -66,46 +66,34 @@ router.get('/store/department', authenticateToken, async (req, res) => {
     }
     const deptId = deptResult.rows[0].id;
 
-    const categoryScope = `
-      (dc.id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM department_categories WHERE department_id = $1))
-    `;
-
     const [availableCount, usedCount, lostCount, damagedCount] = await Promise.all([
       pool.query(
         `SELECT COUNT(a.id) AS count
          FROM assets a
-         JOIN asset_categories ac ON a.category_id = ac.id
-         LEFT JOIN department_categories dc ON dc.category_id = ac.id AND dc.department_id = $1
          WHERE a.status = 'available'
-           AND a.store_department_id IS NOT NULL
-           AND (a.store_department_id = $1 OR ac.specialist_department_id = $1)
-           AND ${categoryScope}`,
+           AND a.store_department_id = $1`,
         [deptId]
       ),
       pool.query(
         `SELECT COUNT(aa.id) AS count
          FROM asset_assignments aa
-         JOIN assets a ON aa.asset_id = a.id
-         JOIN asset_categories ac ON a.category_id = ac.id
          WHERE aa.status = 'active'
-           AND ac.specialist_department_id = $1`,
+           AND aa.department_id = $1`,
         [deptId]
       ),
       pool.query(
         `SELECT COUNT(ir.id) AS count
          FROM issue_reports ir
-         JOIN assets a ON ir.asset_id = a.id
-         JOIN asset_categories ac ON a.category_id = ac.id
-         WHERE ac.specialist_department_id = $1
+         JOIN users u ON ir.reported_by = u.id
+         WHERE u.department_id = $1
            AND LOWER(ir.issue_type) = 'lost'`,
         [deptId]
       ),
       pool.query(
         `SELECT COUNT(ir.id) AS count
          FROM issue_reports ir
-         JOIN assets a ON ir.asset_id = a.id
-         JOIN asset_categories ac ON a.category_id = ac.id
-         WHERE ac.specialist_department_id = $1
+         JOIN users u ON ir.reported_by = u.id
+         WHERE u.department_id = $1
            AND LOWER(ir.issue_type) = 'damaged'`,
         [deptId]
       ),
@@ -125,15 +113,12 @@ router.get('/store/department', authenticateToken, async (req, res) => {
         `SELECT a.id, a.name, a.serial_number, a.brand, a.model, a.condition,
                 ac.name AS category_name,
                 sd.name AS store_department_name,
-                CASE WHEN a.store_department_id IS NULL THEN 'general' ELSE 'reserved' END AS pool_type
+                'reserved' AS pool_type
          FROM assets a
          JOIN asset_categories ac ON a.category_id = ac.id
          LEFT JOIN departments sd ON a.store_department_id = sd.id
-         LEFT JOIN department_categories dc ON dc.category_id = ac.id AND dc.department_id = $1
          WHERE a.status = 'available'
-           AND a.store_department_id IS NOT NULL
-           AND (a.store_department_id = $1 OR ac.specialist_department_id = $1)
-           AND ${categoryScope}
+           AND a.store_department_id = $1
          ORDER BY ac.name, a.name`,
         [deptId]
       );
@@ -154,7 +139,7 @@ router.get('/store/department', authenticateToken, async (req, res) => {
          LEFT JOIN departments d ON aa.department_id = d.id
          LEFT JOIN departments sd ON a.store_department_id = sd.id
          WHERE aa.status = 'active'
-           AND ac.specialist_department_id = $1
+           AND aa.department_id = $1
          ORDER BY ac.name, a.name`,
         [deptId]
       );
@@ -173,9 +158,9 @@ router.get('/store/department', authenticateToken, async (req, res) => {
          JOIN asset_categories ac ON a.category_id = ac.id
          LEFT JOIN users u ON ir.reported_by = u.id
          LEFT JOIN departments d ON u.department_id = d.id
-         WHERE ac.specialist_department_id = $1
+         WHERE u.department_id = $1
            AND LOWER(ir.issue_type) = 'lost'
-         ORDER BY ir.created_at DESC`,
+         ORDER BY ir.created_at DESC NULLS LAST`,
         [deptId]
       );
       items = itemsResult.rows;
@@ -193,9 +178,9 @@ router.get('/store/department', authenticateToken, async (req, res) => {
          JOIN asset_categories ac ON a.category_id = ac.id
          LEFT JOIN users u ON ir.reported_by = u.id
          LEFT JOIN departments d ON u.department_id = d.id
-         WHERE ac.specialist_department_id = $1
+         WHERE u.department_id = $1
            AND LOWER(ir.issue_type) = 'damaged'
-         ORDER BY ir.created_at DESC`,
+         ORDER BY ir.created_at DESC NULLS LAST`,
         [deptId]
       );
       items = itemsResult.rows;
@@ -205,19 +190,12 @@ router.get('/store/department', authenticateToken, async (req, res) => {
 
     const summaryResult = await pool.query(
       `SELECT ac.id AS category_id, ac.name AS category_name,
-              COUNT(a.id) FILTER (
-                WHERE a.status = 'available'
-                  AND a.store_department_id IS NOT NULL
-                  AND (a.store_department_id = $1 OR ac.specialist_department_id = $1)
-              ) AS available_count,
-              COUNT(a.id) FILTER (
-                WHERE a.status = 'available' AND a.store_department_id = $1
-              ) AS reserved_for_department
-       FROM asset_categories ac
-       LEFT JOIN department_categories dc ON dc.category_id = ac.id AND dc.department_id = $1
-       LEFT JOIN assets a ON a.category_id = ac.id
-       WHERE dc.id IS NOT NULL
-          OR NOT EXISTS (SELECT 1 FROM department_categories WHERE department_id = $1)
+              COUNT(aa.id) FILTER (WHERE aa.status = 'active') AS available_count,
+              0 AS reserved_for_department
+       FROM asset_assignments aa
+       JOIN assets a ON aa.asset_id = a.id
+       JOIN asset_categories ac ON a.category_id = ac.id
+       WHERE aa.department_id = $1 AND aa.status = 'active'
        GROUP BY ac.id, ac.name
        ORDER BY ac.name`,
       [deptId]

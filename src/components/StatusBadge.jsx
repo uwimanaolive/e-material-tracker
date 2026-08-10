@@ -28,24 +28,24 @@ export function getStatusLabel(status, item) {
 
   switch (status) {
     case 'pending_head':
-      return reporter ? `Awaiting ${reporter} Head` : 'Awaiting Department Head';
+      return reporter ? `Awaiting ${reporter} Head` : 'Awaiting Head';
     case 'pending_hse':
-      return 'Awaiting HSE Review';
+      return 'Awaiting HSE';
     case 'pending_owner_dept':
     case 'pending_specialist':
-      return owner ? `Awaiting ${owner} Department` : 'Awaiting Owning Department';
+      return owner ? `Awaiting ${owner}` : 'Awaiting Owner Dept';
     case 'pending_dept_assignment':
-      return owner ? `Awaiting ${owner} — Store Assignment` : 'Awaiting Department Store Assignment';
+      return owner ? `Awaiting ${owner} Store` : 'Awaiting Store';
     case 'pending_inventory':
     case 'pending_procurement':
     case 'specialist_approved':
-      return 'Awaiting Inventory Department';
+      return 'Awaiting Inventory';
     case 'approved':
-      return 'Approved by Inventory';
+      return 'Inventory Approved';
     case 'fulfilled':
-      return 'Fulfilled — Assets Assigned';
+      return 'Assets Assigned';
     case 'partially_fulfilled':
-      return 'Partially Fulfilled';
+      return 'Partially Assigned';
     case 'rejected':
       return 'Rejected';
     case 'resolved':

@@ -48,11 +48,13 @@ router.get('/', authenticateToken, async (req, res) => {
       SELECT aa.*, 
              a.name as asset_name,
              a.serial_number,
+             ac.name as category_name,
              u.name as assigned_to_name,
              ub.name as assigned_by_name,
              d.name as department_name
       FROM asset_assignments aa
       LEFT JOIN assets a ON aa.asset_id = a.id
+      LEFT JOIN asset_categories ac ON a.category_id = ac.id
       LEFT JOIN users u ON aa.assigned_to = u.id
       LEFT JOIN users ub ON aa.assigned_by = ub.id
       LEFT JOIN departments d ON aa.department_id = d.id
@@ -63,7 +65,7 @@ router.get('/', authenticateToken, async (req, res) => {
     
     if (department) {
       paramCount++;
-      query += ` AND d.name = $${paramCount}`;
+      query += ` AND d.name = $${paramCount} AND aa.status = 'active'`;
       params.push(department);
     }
     

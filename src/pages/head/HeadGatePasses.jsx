@@ -42,6 +42,7 @@ export const HeadGatePasses = () => {
   };
 
   const handleAction = async (action) => {
+    if (!actionNotes.trim()) { toast.error("Comment is required"); return; }
     try {
       await gatePassesApi.headAction(selectedGatePass.id, { action, notes: actionNotes });
       toast.success(action === "approve" ? "Gate pass approved" : "Gate pass rejected");
@@ -169,8 +170,8 @@ export const HeadGatePasses = () => {
                 <p className="text-sm text-muted-foreground">{selectedGatePass.reason}</p>
               </div>
               <div>
-                <p className="text-sm font-medium">Notes</p>
-                <Textarea value={actionNotes} onChange={(e) => setActionNotes(e.target.value)} placeholder="Add notes for your decision" />
+                <p className="text-sm font-medium">Comment *</p>
+                <Textarea value={actionNotes} onChange={(e) => setActionNotes(e.target.value)} placeholder="Required — explain your decision" />
               </div>
               <div className="flex gap-2">
                 <Button onClick={() => handleAction("approve")} className="flex-1">

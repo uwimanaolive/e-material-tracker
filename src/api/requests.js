@@ -18,5 +18,6 @@ export const requestsApi = {
   create: async (data) => apiClient.post('/requests', data),
   ownerAction: async (id, data) => apiClient.put(`/requests/${id}/owner-action`, data),
   deptAssign: async (id, data) => apiClient.put(`/requests/${id}/dept-assign`, data),
+  deptAssignUpdate: async (id, data) => apiClient.put(`/requests/${id}/dept-assign-update`, data),
   inventoryAction: async (id, data) => apiClient.put(`/requests/${id}/inventory-action`, data),
 };

@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { Package, Monitor, AlertTriangle, XCircle, CheckCircle2 } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
 import { StatusBadge } from "../../components/StatusBadge";
-import { format } from "date-fns";
+import { safeFormatDate } from "@/utils/formatDate";
 import { toast } from "sonner";
 import { cn } from "../../components/ui/cn";
 
@@ -18,7 +18,7 @@ const VIEW_CONFIG = {
     activeColor: "ring-2 ring-green-500 bg-green-100",
   },
   used: {
-    label: "Used / Assigned",
+    label: "Assigned",
     icon: Monitor,
     color: "border-blue-200 bg-blue-50 hover:bg-blue-100",
     activeColor: "ring-2 ring-blue-500 bg-blue-100",
@@ -156,8 +156,8 @@ export const HeadStore = () => {
               <TableCell>{item.serial_number}</TableCell>
               <TableCell>{item.reporter_name || "—"}</TableCell>
               <TableCell>{item.department_name || "—"}</TableCell>
-              <TableCell><StatusBadge status={item.report_status} /></TableCell>
-              <TableCell>{format(new Date(item.created_at), "MMM d, yyyy")}</TableCell>
+              <TableCell><StatusBadge status={item.report_status || item.status} item={item} /></TableCell>
+              <TableCell>{safeFormatDate(item.created_at)}</TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -170,7 +170,7 @@ export const HeadStore = () => {
       <div>
         <h1 className="text-2xl font-bold">Inventory Store</h1>
         <p className="text-muted-foreground">
-          Full store overview for {currentUser.department} — available, assigned, lost, and damaged materials
+          Assets for {currentUser.department} department only — assigned, lost, and damaged items
         </p>
       </div>
 
@@ -199,7 +199,7 @@ export const HeadStore = () => {
         })}
       </div>
 
-      {store?.summary?.length > 0 && view === "available" && (
+      {store?.summary?.length > 0 && view === "used" && (
         <div className="grid gap-4 md:grid-cols-3">
           {store.summary.map((row) => (
             <Card key={row.category_id}>
@@ -208,11 +208,7 @@ export const HeadStore = () => {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{row.available_count}</div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {row.reserved_for_department > 0
-                    ? `${row.reserved_for_department} reserved for your department`
-                    : "Department pool"}
-                </p>
+                <p className="text-xs text-muted-foreground mt-1">Assigned active</p>
               </CardContent>
             </Card>
           ))}

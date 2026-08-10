@@ -1,6 +1,6 @@
 import React from "react";
 import { CheckCircle2, Circle, Clock } from "lucide-react";
-import { format } from "date-fns";
+import { safeFormatDate } from "@/utils/formatDate";
 
 export const Timeline = ({ timeline }) => {
   if (!timeline || timeline.length === 0) return <div className="text-sm text-muted-foreground">No timeline events yet.</div>;
@@ -21,7 +21,7 @@ export const Timeline = ({ timeline }) => {
           <div className="flex flex-col">
             <div className="flex items-center gap-2">
               <span className="font-medium text-sm text-foreground">{event.action}</span>
-              <span className="text-xs text-muted-foreground">{format(new Date(event.created_at), "MMM d, yyyy h:mm a")}</span>
+              <span className="text-xs text-muted-foreground">{safeFormatDate(event.created_at, "MMM d, yyyy h:mm a")}</span>
             </div>
             <div className="text-sm text-muted-foreground mt-0.5">
               <span className="font-medium text-foreground">{event.actor_name || event.actor_role}</span>

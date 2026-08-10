@@ -167,9 +167,22 @@ export const EmployeeDashboard = () => {
                 <GatePassCard gatePass={selected} />
               )}
               {selected.itemType === "request" && selected.items && (
-                <ul className="text-sm text-muted-foreground space-y-1">
+                <ul className="text-sm text-muted-foreground space-y-2">
                   {selected.items.map((item, i) => (
-                    <li key={i}>• {item.fulfilled_quantity || 0}/{item.quantity}x {item.category_name}</li>
+                    <li key={i}>
+                      • {item.fulfilled_quantity || 0}/{item.quantity}x {item.category_name}
+                      {item.assigned_assets?.length > 0 && (
+                        <ul className="ml-4 mt-1 text-xs text-emerald-700 space-y-0.5">
+                          {item.assigned_assets.map((a) => (
+                            <li key={a.id}>
+                              {a.name}
+                              {a.serial_number && ` (SN: ${a.serial_number})`}
+                              {" assigned to you"}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </li>
                   ))}
                 </ul>
               )}

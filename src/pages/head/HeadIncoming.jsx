@@ -1,4 +1,5 @@
 import React from "react";
+import { useStore } from "../../store";
 import { requestsApi } from "../../api/requests";
 import { gatePassesApi } from "../../api/gatePasses";
 import { issueReportsApi } from "../../api/issueReports";
@@ -13,11 +14,13 @@ import { Label } from "../../components/ui/label";
 import { Timeline } from "../../components/Timeline";
 import { AttachmentViewer } from "../../components/AttachmentViewer";
 import { StatusBadge } from "../../components/StatusBadge";
-import { Inbox, Check, X, Clock } from "lucide-react";
+import { Inbox, Check, X, Clock, User, Package } from "lucide-react";
+import { Badge } from "../../components/ui/badge";
 import { format } from "date-fns";
 import { toast } from "sonner";
 
 export const HeadIncoming = () => {
+  const { currentUser } = useStore();
   const [requests, setRequests] = React.useState([]);
   const [deptAssignRequests, setDeptAssignRequests] = React.useState([]);
   const [gatePasses, setGatePasses] = React.useState([]);
@@ -60,6 +63,8 @@ export const HeadIncoming = () => {
     }
   };
 
+  const isDeptUpdate = (status) => ['pending_inventory', 'pending_procurement'].includes(status);
+
   const openItem = async (itemType, item) => {
     try {
       let detail = item;
@@ -74,7 +79,11 @@ export const HeadIncoming = () => {
           toast.error(assetError.message || "Could not load available assets for assignment");
         }
         const initial = {};
-        detail.items?.forEach((i) => { initial[i.id] = []; });
+        detail.items?.forEach((i) => {
+          if (i.owner_department_name === currentUser.department) {
+            initial[i.id] = (i.assigned_assets || []).map((a) => a.id);
+          }
+        });
         setSelectedAssets(initial);
       }
       if (itemType === "gatepass") detail = await gatePassesApi.getById(item.id);
@@ -88,13 +97,51 @@ export const HeadIncoming = () => {
     }
   };
 
+  const ownedItems = (items) =>
+    (items || []).filter(
+      (item) => item.owner_department_name === currentUser.department
+    );
+
   const handleDeptAssign = async () => {
+    if (!notes.trim()) { toast.error("Comment is required"); return; }
+    const updating = isDeptUpdate(selected?.status);
+    const myItems = ownedItems(selected?.items);
+    for (const item of myItems) {
+      const remaining = updating
+        ? item.quantity
+        : item.quantity - (item.fulfilled_quantity || 0);
+      if (!updating && remaining <= 0) continue;
+      const picked = (selectedAssets[item.id] || []).length;
+      const available = (availableAssets[item.id] || []).length;
+      const required = Math.min(remaining, available);
+      if (available === 0) {
+        toast.error(`No "${item.category_name}" assets in store`);
+        return;
+      }
+      if (picked < required) {
+        toast.error(`Select ${required} "${item.category_name}" asset(s) for ${selected.assignee_name}`);
+        return;
+      }
+      if (updating && picked > required) {
+        toast.error(`Select at most ${required} "${item.category_name}" asset(s)`);
+        return;
+      }
+    }
     try {
-      const fulfillments = Object.entries(selectedAssets)
-        .filter(([, ids]) => ids.length > 0)
-        .map(([request_item_id, asset_ids]) => ({ request_item_id: parseInt(request_item_id), asset_ids }));
-      const result = await requestsApi.deptAssign(selected.id, { fulfillments, notes });
-      toast.success(result?.message || "Store assignment submitted");
+      const fulfillments = updating
+        ? myItems.map((item) => ({
+            request_item_id: item.id,
+            asset_ids: selectedAssets[item.id] || [],
+          }))
+        : Object.entries(selectedAssets)
+            .filter(([, ids]) => ids.length > 0)
+            .map(([request_item_id, asset_ids]) => ({
+              request_item_id: parseInt(request_item_id, 10),
+              asset_ids,
+            }));
+      const apiCall = updating ? requestsApi.deptAssignUpdate : requestsApi.deptAssign;
+      const result = await apiCall(selected.id, { fulfillments, notes });
+      toast.success(result?.message || (updating ? "Assignment updated" : "Store assignment submitted"));
       setSelected(null);
       loadAll();
     } catch (error) {
@@ -106,7 +153,10 @@ export const HeadIncoming = () => {
     setSelectedAssets((prev) => {
       const current = prev[itemId] || [];
       const item = selected?.items?.find((i) => i.id === itemId);
-      const maxQty = item ? item.quantity - (item.fulfilled_quantity || 0) : 1;
+      const updating = isDeptUpdate(selected?.status);
+      const maxQty = item
+        ? (updating ? item.quantity : item.quantity - (item.fulfilled_quantity || 0))
+        : 1;
       if (current.includes(assetId)) return { ...prev, [itemId]: current.filter((id) => id !== assetId) };
       if (current.length >= maxQty) { toast.error(`Maximum ${maxQty} asset(s)`); return prev; }
       return { ...prev, [itemId]: [...current, assetId] };
@@ -114,6 +164,8 @@ export const HeadIncoming = () => {
   };
 
   const handleApprove = async () => {
+    if (!notes.trim()) { toast.error("Comment is required"); return; }
+    if (type === "report" && !recommendation) { toast.error("Please select a recommendation"); return; }
     try {
       if (type === "request") await requestsApi.ownerAction(selected.id, { action: "approve", notes });
       if (type === "gatepass") await gatePassesApi.ownerAction(selected.id, { action: "approve", notes });
@@ -150,10 +202,17 @@ export const HeadIncoming = () => {
             <TableRow key={item.id}>
               <TableCell className="font-medium">{item.request_number || item.gate_pass_number || item.report_number}</TableCell>
               <TableCell>{item.department_name || item.employee_name || item.reporter_name}</TableCell>
-              {t !== "request" && <TableCell>{item.asset_name}</TableCell>}
+              {t === "deptassign" && <TableCell>{item.assignee_name || "—"}</TableCell>}
+              {t !== "request" && t !== "deptassign" && <TableCell>{item.asset_name}</TableCell>}
               <TableCell>{format(new Date(item.created_at || item.updated_at), "MMM d, yyyy")}</TableCell>
               <TableCell><StatusBadge status={item.status} item={item} /></TableCell>
-              {showReview && <TableCell><Button size="sm" variant="ghost" onClick={() => openItem(t, item)}>View</Button></TableCell>}
+              {showReview && (
+                <TableCell>
+                  <Button size="sm" variant="ghost" onClick={() => openItem(t, item)}>
+                    {t === "deptassign" && isDeptUpdate(item.status) ? "Edit" : t === "deptassign" ? "Assign" : "View"}
+                  </Button>
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>
@@ -180,9 +239,14 @@ export const HeadIncoming = () => {
 
         <TabsContent value="deptassign">
           <Card>
-            <CardHeader><CardTitle>Assign Store Assets Before Inventory Approval</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>Assign Store Assets Before Inventory</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Pick devices from your store (matching requested category). You can update assignments while Inventory has not yet approved.
+              </p>
+            </CardHeader>
             <CardContent>
-              <ItemTable data={deptAssignRequests} t="deptassign" cols={["Request #", "From Dept", "Date"]} />
+              <ItemTable data={deptAssignRequests} t="deptassign" cols={["Request #", "From Dept", "Assignee", "Date"]} />
             </CardContent>
           </Card>
         </TabsContent>
@@ -209,15 +273,28 @@ export const HeadIncoming = () => {
       </Tabs>
 
       <Dialog open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Item Details</DialogTitle>
+            <DialogTitle>
+              {type === "deptassign"
+                ? (isDeptUpdate(selected?.status) ? "Update Store Assignment" : "Assign Store Assets")
+                : "Item Details"}
+            </DialogTitle>
             <DialogDescription>{selected?.request_number || selected?.gate_pass_number || selected?.report_number}</DialogDescription>
           </DialogHeader>
           {selected && (
             <div className="space-y-4">
               <StatusBadge status={selected.status} item={selected} />
-              {selected.assignee_name && <p className="text-sm"><span className="font-medium">Assignee:</span> {selected.assignee_name}</p>}
+              {type === "deptassign" && selected.assignee_name && (
+                <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
+                  <User className="w-4 h-4 text-blue-600" />
+                  <span><span className="font-medium">Assign devices to:</span> {selected.assignee_name}</span>
+                  <Badge variant="secondary">{selected.department_name}</Badge>
+                </div>
+              )}
+              {selected.assignee_name && type !== "deptassign" && (
+                <p className="text-sm"><span className="font-medium">Assignee:</span> {selected.assignee_name}</p>
+              )}
               {selected.justification && <p className="text-sm">{selected.justification}</p>}
               {type === "request" && selected.items?.length > 0 && (
                 <ul className="text-sm text-muted-foreground space-y-1">
@@ -226,25 +303,79 @@ export const HeadIncoming = () => {
                   ))}
                 </ul>
               )}
-              {type === "deptassign" && selected.items?.map((item) => {
+              {type === "deptassign" && isDeptUpdate(selected.status) && (
+                <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  Inventory has not approved yet — you may change the comment and devices assigned from your store.
+                </p>
+              )}
+              {type === "deptassign" && ownedItems(selected.items).filter((item) => {
+                if (isDeptUpdate(selected.status)) return true;
+                return item.quantity - (item.fulfilled_quantity || 0) > 0;
+              }).map((item) => {
                 const assets = availableAssets[item.id] || [];
-                const remaining = item.quantity - (item.fulfilled_quantity || 0);
+                const updating = isDeptUpdate(selected.status);
+                const remaining = updating
+                  ? item.quantity
+                  : item.quantity - (item.fulfilled_quantity || 0);
+                const picked = selectedAssets[item.id] || [];
                 return (
-                  <div key={item.id} className="border rounded p-2 space-y-2">
-                    <p className="font-medium text-sm">{item.quantity}x {item.category_name} ({remaining} to assign)</p>
+                  <div key={item.id} className="border rounded-lg p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-medium text-sm flex items-center gap-1">
+                        <Package className="w-3.5 h-3.5" />
+                        {item.category_name} — select {Math.min(remaining, assets.length)} of {remaining} required
+                      </p>
+                      <Badge variant={picked.length >= Math.min(remaining, assets.length) ? "default" : "outline"}>
+                        {picked.length} selected
+                      </Badge>
+                    </div>
+                    {item.assigned_assets?.length > 0 && !updating && (
+                      <p className="text-xs text-emerald-700">
+                        Already assigned: {item.assigned_assets.map((a) => `${a.name} (${a.serial_number})`).join(", ")}
+                      </p>
+                    )}
+                    {updating && item.assigned_assets?.length > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Current: {item.assigned_assets.map((a) => `${a.name}${a.serial_number ? ` (${a.serial_number})` : ""}`).join(", ")}
+                      </p>
+                    )}
                     {assets.length === 0 ? (
-                      <p className="text-xs text-muted-foreground">No available assets — skip to forward empty</p>
+                      <p className="text-xs text-amber-700">No available "{item.category_name}" assets in your store</p>
                     ) : (
-                      <div className="flex flex-wrap gap-1">
+                      <div className="space-y-1">
                         {assets.map((a) => (
-                          <Button key={a.id} size="sm" variant={(selectedAssets[item.id] || []).includes(a.id) ? "default" : "outline"}
-                            onClick={() => toggleAsset(item.id, a.id)}>{a.name}</Button>
+                          <Button
+                            key={a.id}
+                            size="sm"
+                            variant={picked.includes(a.id) ? "default" : "outline"}
+                            className="w-full justify-start h-auto py-2"
+                            onClick={() => toggleAsset(item.id, a.id)}
+                          >
+                            <span className="text-left">
+                              <span className="font-medium">{a.name}</span>
+                              {a.serial_number && <span className="text-xs opacity-80 ml-2">SN: {a.serial_number}</span>}
+                              {a.condition && <span className="text-xs opacity-70 ml-1">· {a.condition}</span>}
+                            </span>
+                          </Button>
                         ))}
                       </div>
                     )}
                   </div>
                 );
               })}
+              {type === "deptassign" && !isDeptUpdate(selected?.status) && ownedItems(selected.items).filter((item) => item.quantity - (item.fulfilled_quantity || 0) <= 0).length > 0 && (
+                <div className="text-sm text-emerald-700 border border-emerald-200 rounded-lg p-3">
+                  Completed:{" "}
+                  {ownedItems(selected.items)
+                    .filter((item) => item.quantity - (item.fulfilled_quantity || 0) <= 0)
+                    .flatMap((item) => item.assigned_assets || [])
+                    .map((a) => `${a.name}${a.serial_number ? ` (${a.serial_number})` : ""} → ${a.assigned_to_name || selected.assignee_name}`)
+                    .join("; ")}
+                </div>
+              )}
+              {type === "deptassign" && ownedItems(selected.items).length === 0 && (
+                <p className="text-sm text-muted-foreground">No categories owned by your department on this request.</p>
+              )}
               {selected.description && <p className="text-sm">{selected.description}</p>}
               {selected.reason && <p className="text-sm">{selected.reason}</p>}
               <AttachmentViewer attachment={selected.attachment} />
@@ -264,8 +395,20 @@ export const HeadIncoming = () => {
               )}
               {selected.status === "pending_owner_dept" && (
                 <div>
-                  <Label>Notes</Label>
-                  <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Add notes" />
+                  <Label>Comment *</Label>
+                  <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Required — explain your decision" />
+                </div>
+              )}
+              {type === "deptassign" && (selected?.status === "pending_dept_assignment" || isDeptUpdate(selected?.status)) && (
+                <div>
+                  <Label>Comment *</Label>
+                  <Textarea
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    placeholder={isDeptUpdate(selected?.status)
+                      ? "Required — explain what you changed"
+                      : "Required — note on store assignment"}
+                  />
                 </div>
               )}
               {selected.timeline && <Timeline timeline={selected.timeline} />}
@@ -279,10 +422,16 @@ export const HeadIncoming = () => {
               <Button onClick={handleApprove}><Check className="w-4 h-4 mr-1" /> Approve & Forward</Button>
             </DialogFooter>
           )}
-          {type === "deptassign" && selected?.status === "pending_dept_assignment" && (
+          {type === "deptassign" && selected?.status === "pending_dept_assignment" && ownedItems(selected?.items).some((item) => item.quantity - (item.fulfilled_quantity || 0) > 0) && (
             <DialogFooter className="gap-2">
               <Button variant="outline" onClick={() => { setSelected(null); }}>Cancel</Button>
-              <Button onClick={handleDeptAssign}><Check className="w-4 h-4 mr-1" /> Submit Assignment</Button>
+              <Button onClick={handleDeptAssign}><Check className="w-4 h-4 mr-1" /> Assign & Forward</Button>
+            </DialogFooter>
+          )}
+          {type === "deptassign" && isDeptUpdate(selected?.status) && ownedItems(selected?.items).length > 0 && (
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => { setSelected(null); }}>Cancel</Button>
+              <Button onClick={handleDeptAssign}><Check className="w-4 h-4 mr-1" /> Save Changes</Button>
             </DialogFooter>
           )}
         </DialogContent>
