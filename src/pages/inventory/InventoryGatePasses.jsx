@@ -147,7 +147,7 @@ export const InventoryGatePasses = () => {
             </div>
           )}
           <DialogFooter className="gap-2 flex-wrap">
-            {selected?.status === "pending_Inventory" && (
+            {['pending_inventory', 'pending_procurement'].includes(selected?.status) && (
               <>
                 <Button variant="destructive" onClick={() => handleinventoryAction("reject")}><X className="w-4 h-4 mr-1" /> Reject</Button>
                 <Button onClick={() => handleinventoryAction("approve")}><Check className="w-4 h-4 mr-1" /> Confirm & Activate</Button>
