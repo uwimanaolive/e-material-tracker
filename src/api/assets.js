@@ -17,8 +17,12 @@ export const assetsApi = {
 
   getStoreForDepartment: async (department, view = 'available') => {
     const params = new URLSearchParams();
-    if (department) params.set('department', department);
     if (view) params.set('view', view);
+    if (department && department !== 'all') {
+      params.set('department', department);
+    } else {
+      params.set('scope', 'all');
+    }
     const query = params.toString() ? `?${params.toString()}` : '';
     return await apiClient.get(`/assets/store/department${query}`);
   },

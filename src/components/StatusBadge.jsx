@@ -12,6 +12,8 @@ const STATUS_COLORS = {
   fulfilled: "bg-emerald-100 text-emerald-800 border-emerald-200",
   partially_fulfilled: "bg-teal-100 text-teal-800 border-teal-200",
   rejected: "bg-rose-100 text-rose-800 border-rose-200",
+  returned: "bg-amber-100 text-amber-800 border-amber-200",
+  cancelled: "bg-slate-100 text-slate-800 border-slate-200",
   resolved: "bg-emerald-100 text-emerald-800 border-emerald-200",
   active: "bg-emerald-100 text-emerald-800 border-emerald-200",
   closed: "bg-slate-100 text-slate-800 border-slate-200",
@@ -48,6 +50,10 @@ export function getStatusLabel(status, item) {
       return 'Partially Assigned';
     case 'rejected':
       return 'Rejected';
+    case 'returned':
+      return 'Returned — Edit & Resubmit';
+    case 'cancelled':
+      return 'Cancelled';
     case 'resolved':
       return ctx.resolution_outcome
         ? `Resolved — ${String(ctx.resolution_outcome).replace(/_/g, ' ')}`
@@ -64,6 +70,8 @@ export function getStatusLabel(status, item) {
 export const getStatusHint = (status, item) => {
   const label = getStatusLabel(status, item);
   if (status === 'rejected') return `${label} — see timeline for who rejected and why`;
+  if (status === 'returned') return `${label} — correct the request using the comment, then resubmit`;
+  if (status === 'cancelled') return `${label} — this request will not be processed`;
   if (status === 'active') return `${label} — show QR code at security gate`;
   if (status === 'resolved') return `${label} — full history in timeline below`;
   return label;
