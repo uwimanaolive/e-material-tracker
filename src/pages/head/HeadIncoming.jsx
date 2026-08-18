@@ -14,7 +14,7 @@ import { Label } from "../../components/ui/label";
 import { Timeline } from "../../components/Timeline";
 import { AttachmentViewer } from "../../components/AttachmentViewer";
 import { StatusBadge } from "../../components/StatusBadge";
-import { Inbox, Check, X, Clock, User, Package } from "lucide-react";
+import { Inbox, Check, X, Clock, User, Package, RotateCcw } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
 import { format } from "date-fns";
 import { toast } from "sonner";
@@ -35,6 +35,9 @@ export const HeadIncoming = () => {
   const [availableAssets, setAvailableAssets] = React.useState({});
   const [selectedAssets, setSelectedAssets] = React.useState({});
   const [loading, setLoading] = React.useState(true);
+  const [decisionAction, setDecisionAction] = React.useState(null);
+  const [decisionNotes, setDecisionNotes] = React.useState("");
+  const [decisionSubmitting, setDecisionSubmitting] = React.useState(false);
 
   React.useEffect(() => { loadAll(); }, []);
 
@@ -149,6 +152,36 @@ export const HeadIncoming = () => {
     }
   };
 
+  const handleReturnToRequester = async (action, comment) => {
+    const reason = (comment ?? notes).trim();
+    if (!reason) { toast.error("Comment is required"); return; }
+    try {
+      const result = await requestsApi.returnToRequester(selected.id, { action, notes: reason });
+      toast.success(result?.message || (action === "reject" ? "Request rejected" : "Request returned to requester"));
+      setDecisionAction(null);
+      setDecisionNotes("");
+      setSelected(null);
+      loadAll();
+    } catch (error) {
+      toast.error(error.message || "Action failed");
+    }
+  };
+
+  const openDecision = (action) => {
+    setDecisionAction(action);
+    setDecisionNotes("");
+  };
+
+  const confirmDecision = async () => {
+    if (!decisionNotes.trim()) { toast.error("Comment is required"); return; }
+    setDecisionSubmitting(true);
+    try {
+      await handleReturnToRequester(decisionAction, decisionNotes);
+    } finally {
+      setDecisionSubmitting(false);
+    }
+  };
+
   const toggleAsset = (itemId, assetId) => {
     setSelectedAssets((prev) => {
       const current = prev[itemId] || [];
@@ -242,7 +275,7 @@ export const HeadIncoming = () => {
             <CardHeader>
               <CardTitle>Assign Store Assets Before Inventory</CardTitle>
               <p className="text-sm text-muted-foreground">
-                Pick devices from your store (matching requested category). You can update assignments while Inventory has not yet approved.
+                Pick devices from your store (matching requested category). Approve by assigning assets, or return/reject with a comment. Recall is only available to the department that submitted the request.
               </p>
             </CardHeader>
             <CardContent>
@@ -415,25 +448,74 @@ export const HeadIncoming = () => {
             </div>
           )}
           {selected?.status === "pending_owner_dept" && type !== "deptassign" && (
-            <DialogFooter className="gap-2">
+            <DialogFooter className="gap-2 flex-wrap">
+              {type === "request" && (
+                <Button variant="outline" onClick={() => openDecision("return")}>
+                  <RotateCcw className="w-4 h-4 mr-1" /> Return
+                </Button>
+              )}
               {type !== "report" && (
-                <Button variant="destructive" onClick={handleReject}><X className="w-4 h-4 mr-1" /> Reject</Button>
+                <Button variant="destructive" onClick={() => (type === "request" ? openDecision("reject") : handleReject())}>
+                  <X className="w-4 h-4 mr-1" /> Reject
+                </Button>
               )}
               <Button onClick={handleApprove}><Check className="w-4 h-4 mr-1" /> Approve & Forward</Button>
             </DialogFooter>
           )}
+          {type === "deptassign" && selected?.status === "pending_dept_assignment" && ownedItems(selected?.items).length > 0 && !ownedItems(selected?.items).some((item) => item.quantity - (item.fulfilled_quantity || 0) > 0) && (
+            <DialogFooter className="gap-2 flex-wrap">
+              <Button variant="outline" onClick={() => openDecision("return")}><RotateCcw className="w-4 h-4 mr-1" /> Return</Button>
+              <Button variant="destructive" onClick={() => openDecision("reject")}><X className="w-4 h-4 mr-1" /> Reject</Button>
+            </DialogFooter>
+          )}
           {type === "deptassign" && selected?.status === "pending_dept_assignment" && ownedItems(selected?.items).some((item) => item.quantity - (item.fulfilled_quantity || 0) > 0) && (
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => { setSelected(null); }}>Cancel</Button>
+            <DialogFooter className="gap-2 flex-wrap">
+              <Button variant="outline" onClick={() => openDecision("return")}><RotateCcw className="w-4 h-4 mr-1" /> Return</Button>
+              <Button variant="destructive" onClick={() => openDecision("reject")}><X className="w-4 h-4 mr-1" /> Reject</Button>
               <Button onClick={handleDeptAssign}><Check className="w-4 h-4 mr-1" /> Assign & Forward</Button>
             </DialogFooter>
           )}
           {type === "deptassign" && isDeptUpdate(selected?.status) && ownedItems(selected?.items).length > 0 && (
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => { setSelected(null); }}>Cancel</Button>
+            <DialogFooter className="gap-2 flex-wrap">
+              <Button variant="outline" onClick={() => openDecision("return")}><RotateCcw className="w-4 h-4 mr-1" /> Return</Button>
+              <Button variant="destructive" onClick={() => openDecision("reject")}><X className="w-4 h-4 mr-1" /> Reject</Button>
               <Button onClick={handleDeptAssign}><Check className="w-4 h-4 mr-1" /> Save Changes</Button>
             </DialogFooter>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!decisionAction} onOpenChange={(open) => { if (!open) { setDecisionAction(null); setDecisionNotes(""); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{decisionAction === "reject" ? "Reject request" : "Return request"}</DialogTitle>
+            <DialogDescription>
+              {decisionAction === "reject"
+                ? "Enter a reason for rejecting this request. The requester will see it in the timeline."
+                : "Enter a reason for returning this request. The requester can edit and resubmit using your comment."}
+            </DialogDescription>
+          </DialogHeader>
+          <div>
+            <Label>Comment *</Label>
+            <Textarea
+              value={decisionNotes}
+              onChange={(e) => setDecisionNotes(e.target.value)}
+              placeholder={decisionAction === "reject" ? "Required — why this request is rejected" : "Required — why this request is returned"}
+              rows={4}
+            />
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => { setDecisionAction(null); setDecisionNotes(""); }}>Cancel</Button>
+            <Button
+              variant={decisionAction === "reject" ? "destructive" : "default"}
+              onClick={confirmDecision}
+              disabled={decisionSubmitting}
+            >
+              {decisionSubmitting
+                ? "Saving..."
+                : decisionAction === "reject" ? "Confirm Reject" : "Confirm Return"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

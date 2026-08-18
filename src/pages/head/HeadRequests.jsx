@@ -7,7 +7,7 @@ import { departmentsApi } from "../../api/departments";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { StatusBadge, getStatusHint } from "../../components/StatusBadge";
-import { CheckSquare, Plus, Trash2, Package, User } from "lucide-react";
+import { CheckSquare, Plus, Trash2, Package, User, Pencil, Undo2 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
 import { Timeline } from "../../components/Timeline";
@@ -17,13 +17,27 @@ import { Textarea } from "../../components/ui/textarea";
 import { Input } from "../../components/ui/input";
 import { format } from "date-fns";
 import { toast } from "sonner";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { Badge } from "../../components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
 
 const emptyItem = () => ({ category: "", quantity: 1, specifications: "" });
+const EDITABLE_STATUSES = ["pending_owner_dept", "pending_dept_assignment", "returned"];
+const RECALLABLE_STATUSES = ["pending_owner_dept", "pending_dept_assignment", "pending_inventory", "pending_procurement"];
 
 export const HeadRequests = () => {
   const { currentUser } = useStore();
+  const [, setLocation] = useLocation();
+  const editOpenedRef = React.useRef(null);
   const [requests, setRequests] = React.useState([]);
   const [categories, setCategories] = React.useState([]);
   const [employees, setEmployees] = React.useState([]);
@@ -31,8 +45,12 @@ export const HeadRequests = () => {
   const [storeItems, setStoreItems] = React.useState([]);
   const [selectedRequest, setSelectedRequest] = React.useState(null);
   const [isCreateOpen, setIsCreateOpen] = React.useState(false);
+  const [editingRequest, setEditingRequest] = React.useState(null);
+  const [cancelTarget, setCancelTarget] = React.useState(null);
+  const [cancelling, setCancelling] = React.useState(false);
   const [loading, setLoading] = React.useState(true);
   const [submitting, setSubmitting] = React.useState(false);
+  const [formStep, setFormStep] = React.useState("edit");
   const [form, setForm] = React.useState({
     assigned_to: "",
     justification: "",
@@ -68,7 +86,13 @@ export const HeadRequests = () => {
   const loadRequests = async () => {
     try {
       const data = await requestsApi.getAll({ department: currentUser.department });
-      setRequests(data);
+      const list = Array.isArray(data) ? data : [];
+      list.sort((a, b) => {
+        if (a.status === "returned" && b.status !== "returned") return -1;
+        if (b.status === "returned" && a.status !== "returned") return 1;
+        return new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at);
+      });
+      setRequests(list);
     } catch (error) {
       toast.error("Failed to load requests");
     } finally {
@@ -76,9 +100,87 @@ export const HeadRequests = () => {
     }
   };
 
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const editId = params.get("edit");
+    if (!editId || !requests.length || editOpenedRef.current === editId) return;
+    const match = requests.find((r) => String(r.id) === String(editId));
+    if (match) {
+      editOpenedRef.current = editId;
+      openEdit(match);
+      setLocation("/head/requests", { replace: true });
+    }
+  }, [requests]);
+
   const openCreate = () => {
+    setEditingRequest(null);
     setForm({ assigned_to: "", justification: "", urgency: "Normal", items: [emptyItem()] });
+    setFormStep("edit");
     setIsCreateOpen(true);
+  };
+
+  const canEditRequest = (request) =>
+    EDITABLE_STATUSES.includes(request?.status)
+    && (!request.department_name || request.department_name === currentUser.department);
+
+  const canRecallRequest = (request) =>
+    RECALLABLE_STATUSES.includes(request?.status)
+    && (!request.department_name || request.department_name === currentUser.department);
+
+  const handleRecall = async (request) => {
+    try {
+      const result = await requestsApi.recall(request.id);
+      toast.success(result?.message || "Request recalled");
+      setSelectedRequest(null);
+      await loadRequests();
+      openEdit({ ...request, status: "returned" });
+    } catch (error) {
+      toast.error(error.message || "Failed to recall request");
+    }
+  };
+
+  const openEdit = async (request) => {
+    try {
+      const detail = await requestsApi.getById(request.id);
+      if (detail.status === "pending_dept_assignment") {
+        const assigned = (detail.items || []).some((item) => (item.assigned_assets || []).length > 0);
+        if (assigned) {
+          toast.error("Assets are already assigned. Recall the request first, then edit and resubmit.");
+          return;
+        }
+      }
+      setEditingRequest(detail);
+      setForm({
+        assigned_to: detail.assigned_to ? String(detail.assigned_to) : "",
+        justification: detail.justification || "",
+        urgency: detail.urgency || "Normal",
+        items: (detail.items || []).map((item) => ({
+          category: item.category_name || "",
+          quantity: item.quantity || 1,
+          specifications: item.specifications || "",
+        })),
+      });
+      setFormStep("edit");
+      setIsCreateOpen(true);
+    } catch (error) {
+      toast.error(error.message || "Failed to load request for editing");
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!cancelTarget) return;
+    setCancelling(true);
+    try {
+      await requestsApi.cancel(cancelTarget.id, { notes: "Cancelled — will not be resubmitted" });
+      toast.success("Request cancelled");
+      setCancelTarget(null);
+      setSelectedRequest(null);
+      loadRequests();
+    } catch (error) {
+      toast.error(error.message || "Failed to cancel request");
+    } finally {
+      setCancelling(false);
+    }
   };
 
   const updateItem = (index, field, value) => {
@@ -93,31 +195,53 @@ export const HeadRequests = () => {
     setForm({ ...form, items: form.items.filter((_, i) => i !== index) });
   };
 
-  const handleSubmit = async () => {
+  const closeCreate = () => {
+    setIsCreateOpen(false);
+    setEditingRequest(null);
+    setFormStep("edit");
+  };
+
+  const validateForm = () => {
     if (!form.assigned_to) {
       toast.error("Please select an employee to assign equipment to");
-      return;
+      return false;
     }
     if (!form.justification.trim() || form.items.some((i) => !i.category)) {
       toast.error("Please fill in justification and all item categories");
-      return;
+      return false;
     }
+    return true;
+  };
+
+  const goToReview = () => {
+    if (!validateForm()) return;
+    setFormStep("review");
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) return;
 
     setSubmitting(true);
     try {
-      await requestsApi.create({
+      const payload = {
         department: currentUser.department,
-        assigned_to: parseInt(form.assigned_to),
+        assigned_to: parseInt(form.assigned_to, 10),
         justification: form.justification,
         urgency: form.urgency,
         items: form.items.map((i) => ({
           category: i.category,
-          quantity: parseInt(i.quantity) || 1,
+          quantity: parseInt(i.quantity, 10) || 1,
           specifications: i.specifications,
         })),
-      });
-      toast.success("Asset request submitted");
-      setIsCreateOpen(false);
+      };
+      if (editingRequest) {
+        const result = await requestsApi.edit(editingRequest.id, payload);
+        toast.success(result?.message || (editingRequest.status === "returned" ? "Request resubmitted" : "Request updated"));
+      } else {
+        await requestsApi.create(payload);
+        toast.success("Asset request submitted");
+      }
+      closeCreate();
       loadRequests();
     } catch (error) {
       toast.error(error.message || "Failed to submit request");
@@ -193,14 +317,16 @@ export const HeadRequests = () => {
               </TableHeader>
               <TableBody>
                 {requests.map((request) => (
-                  <TableRow key={request.id}>
+                  <TableRow key={request.id} className={request.status === "returned" ? "bg-amber-50" : ""}>
                     <TableCell className="font-medium">{request.request_number}</TableCell>
                     <TableCell>{request.assignee_name || "—"}</TableCell>
                     <TableCell>{request.item_count}</TableCell>
                     <TableCell className="capitalize">{request.urgency}</TableCell>
                     <TableCell>{format(new Date(request.created_at), "MMM d, yyyy")}</TableCell>
                     <TableCell><StatusBadge status={request.status} item={request} /></TableCell>
-                    <TableCell><Button variant="ghost" size="sm" onClick={() => handleView(request)}>View</Button></TableCell>
+                    <TableCell>
+                      <Button variant="ghost" size="sm" onClick={() => handleView(request)}>View</Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -209,13 +335,66 @@ export const HeadRequests = () => {
         </CardContent>
       </Card>
 
-      <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+      <Dialog open={isCreateOpen} onOpenChange={(open) => { if (!open) closeCreate(); else setIsCreateOpen(true); }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>New Asset Request</DialogTitle>
-            <DialogDescription>Request equipment by category — owning department will assign from store</DialogDescription>
+            <DialogTitle>
+              {formStep === "review"
+                ? "Review Request"
+                : editingRequest
+                  ? (editingRequest.status === "returned" ? "Edit & Resubmit Request" : "Edit Asset Request")
+                  : "New Asset Request"}
+            </DialogTitle>
+            <DialogDescription>
+              {formStep === "review"
+                ? "Check the details, then submit. Use Edit to change anything before sending."
+                : editingRequest?.status === "returned"
+                  ? "Update the request using the feedback, then resubmit it into the approval workflow"
+                  : "Request equipment by category — owning department will assign from store"}
+            </DialogDescription>
           </DialogHeader>
+          {formStep === "review" ? (
+            <div className="space-y-4">
+              {editingRequest?.return_notes && (
+                <div className="text-sm p-3 rounded-lg border border-amber-200 bg-amber-50 text-amber-900">
+                  <p className="font-medium">{editingRequest.return_action || "Returned with comment"}</p>
+                  <p className="mt-1">{editingRequest.return_notes}</p>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p className="font-medium">Assign to</p>
+                  <p className="text-muted-foreground">{employees.find((e) => String(e.id) === String(form.assigned_to))?.name || "—"}</p>
+                </div>
+                <div>
+                  <p className="font-medium">Urgency</p>
+                  <p className="text-muted-foreground capitalize">{form.urgency}</p>
+                </div>
+              </div>
+              <div>
+                <p className="text-sm font-medium">Justification</p>
+                <p className="text-sm text-muted-foreground">{form.justification}</p>
+              </div>
+              <div>
+                <p className="text-sm font-medium mb-2">Requested items</p>
+                <ul className="text-sm text-muted-foreground space-y-1">
+                  {form.items.map((item, i) => (
+                    <li key={i}>
+                      • {item.quantity}x {item.category}
+                      {item.specifications ? ` — ${item.specifications}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          ) : (
           <div className="space-y-4">
+            {editingRequest?.return_notes && (
+              <div className="text-sm p-3 rounded-lg border border-amber-200 bg-amber-50 text-amber-900">
+                <p className="font-medium">{editingRequest.return_action || "Returned with comment"}</p>
+                <p className="mt-1">{editingRequest.return_notes}</p>
+              </div>
+            )}
             <div>
               <Label className="flex items-center gap-1"><User className="w-3.5 h-3.5" /> Assign to Employee *</Label>
               <Select value={form.assigned_to} onValueChange={(v) => setForm({ ...form, assigned_to: v })}>
@@ -271,9 +450,25 @@ export const HeadRequests = () => {
               ))}
             </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateOpen(false)}>Cancel</Button>
-            <Button onClick={handleSubmit} disabled={submitting}>{submitting ? "Submitting..." : "Submit Request"}</Button>
+          )}
+          <DialogFooter className="gap-2 flex-wrap">
+            <Button variant="outline" onClick={closeCreate}>Cancel</Button>
+            {formStep === "review" ? (
+              <>
+                <Button variant="outline" onClick={() => setFormStep("edit")}>
+                  <Pencil className="w-4 h-4 mr-1" /> Edit
+                </Button>
+                <Button onClick={handleSubmit} disabled={submitting}>
+                  {submitting
+                    ? "Submitting..."
+                    : editingRequest
+                      ? (editingRequest.status === "returned" ? "Resubmit" : "Save Changes")
+                      : "Submit Request"}
+                </Button>
+              </>
+            ) : (
+              <Button onClick={goToReview}>Review</Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -287,6 +482,12 @@ export const HeadRequests = () => {
           {selectedRequest && (
             <div className="space-y-4">
               <StatusBadge status={selectedRequest.status} item={selectedRequest} />
+              {selectedRequest.status === "returned" && selectedRequest.return_notes && (
+                <div className="text-sm p-3 rounded-lg border border-amber-200 bg-amber-50 text-amber-900">
+                  <p className="font-medium">Feedback</p>
+                  <p className="mt-1">{selectedRequest.return_notes}</p>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <div><p className="font-medium">Requester</p><p className="text-muted-foreground">{selectedRequest.requester_name}</p></div>
                 <div><p className="font-medium">Assignee</p><p className="text-muted-foreground">{selectedRequest.assignee_name || "—"}</p></div>
@@ -322,8 +523,43 @@ export const HeadRequests = () => {
               {selectedRequest.timeline && <Timeline timeline={selectedRequest.timeline} />}
             </div>
           )}
+          {selectedRequest && (canEditRequest(selectedRequest) || canRecallRequest(selectedRequest) || selectedRequest.status === "returned") && (
+            <DialogFooter className="gap-2 flex-wrap">
+              {selectedRequest.status === "returned" && (
+                <Button variant="outline" onClick={() => setCancelTarget(selectedRequest)}>Cancel</Button>
+              )}
+              {canRecallRequest(selectedRequest) && (
+                <Button variant="outline" onClick={() => handleRecall(selectedRequest)}>
+                  <Undo2 className="w-4 h-4 mr-1" /> Recall
+                </Button>
+              )}
+              {canEditRequest(selectedRequest) && (
+                <Button onClick={() => { setSelectedRequest(null); openEdit(selectedRequest); }}>
+                  <Pencil className="w-4 h-4 mr-1" />
+                  {selectedRequest.status === "returned" ? "Resubmit" : "Edit"}
+                </Button>
+              )}
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!cancelTarget} onOpenChange={(open) => !open && setCancelTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel this request?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {cancelTarget?.request_number} will be closed and will not continue in the approval workflow.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep request</AlertDialogCancel>
+            <AlertDialogAction onClick={handleCancel} disabled={cancelling}>
+              {cancelling ? "Cancelling..." : "Cancel request"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
