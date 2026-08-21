@@ -48,6 +48,13 @@ export const STATUS_AFTER_OWNER_APPROVAL = 'pending_dept_assignment';
 /** After dept store assignment */
 export const STATUS_AFTER_DEPT_ASSIGNMENT = 'pending_inventory';
 
+/**
+ * Inventory is the final workflow stage.
+ * After inventory approval the request is fulfilled or partially_fulfilled
+ * (see inventoryConfirmRequest). This constant is kept only for import stability.
+ */
+export const STATUS_AFTER_INVENTORY_APPROVAL = 'fulfilled';
+
 /** After employee dept head action on gate pass / issue report */
 export async function nextStatusAfterHeadApproval(client, assetId, employeeDeptId) {
   const ownerDeptId = await getAssetOwnerDeptId(client, assetId);

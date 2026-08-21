@@ -57,45 +57,83 @@ router.get('/', authenticateToken, async (req, res) => {
 // Get inventory store for a department (available / used / lost / damaged)
 router.get('/store/department', authenticateToken, async (req, res) => {
   try {
-    const departmentName = req.query.department || req.user.department;
     const view = (req.query.view || 'available').toLowerCase();
+    let role = req.user.role === 'specialist' ? 'head' : req.user.role;
+    if (role === 'procurement') role = 'inventory';
+    const isGlobalViewer = ['inventory', 'super_admin', 'admin'].includes(role);
 
-    const deptResult = await pool.query('SELECT id, name FROM departments WHERE name = $1', [departmentName]);
-    if (deptResult.rows.length === 0) {
-      return res.status(400).json({ error: 'Department not found' });
+    const userDept = await pool.query('SELECT department_id FROM users WHERE id = $1', [req.user.id]);
+    const ownerDeptId = isGlobalViewer ? null : (userDept.rows[0]?.department_id || null);
+
+    if (!isGlobalViewer && !ownerDeptId) {
+      return res.json({
+        department: req.user.department || null,
+        managed_categories_only: true,
+        scope: 'all',
+        view,
+        counts: { available: 0, used: 0, lost: 0, damaged: 0 },
+        summary: [],
+        items: [],
+      });
     }
-    const deptId = deptResult.rows[0].id;
+
+    let locationDeptId = null;
+    let locationDeptName = null;
+    const wantsAllLocations = req.query.scope === 'all' || req.query.department === 'all' || !req.query.department;
+    if (!wantsAllLocations) {
+      const deptResult = await pool.query('SELECT id, name FROM departments WHERE name = $1', [req.query.department]);
+      if (!deptResult.rows.length) {
+        return res.status(400).json({ error: 'Department not found' });
+      }
+      locationDeptId = deptResult.rows[0].id;
+      locationDeptName = deptResult.rows[0].name;
+    }
+
+    const filterParams = [ownerDeptId, locationDeptId];
 
     const [availableCount, usedCount, lostCount, damagedCount] = await Promise.all([
       pool.query(
         `SELECT COUNT(a.id) AS count
          FROM assets a
+         JOIN asset_categories ac ON a.category_id = ac.id
          WHERE a.status = 'available'
-           AND a.store_department_id = $1`,
-        [deptId]
+           AND ($1::integer IS NULL OR ac.specialist_department_id = $1)
+           AND ($2::integer IS NULL OR a.store_department_id = $2)`,
+        filterParams
       ),
       pool.query(
         `SELECT COUNT(aa.id) AS count
          FROM asset_assignments aa
+         JOIN assets a ON aa.asset_id = a.id
+         JOIN asset_categories ac ON a.category_id = ac.id
          WHERE aa.status = 'active'
-           AND aa.department_id = $1`,
-        [deptId]
+           AND ($1::integer IS NULL OR ac.specialist_department_id = $1)
+           AND ($2::integer IS NULL OR aa.department_id = $2)`,
+        filterParams
       ),
       pool.query(
         `SELECT COUNT(ir.id) AS count
          FROM issue_reports ir
-         JOIN users u ON ir.reported_by = u.id
-         WHERE u.department_id = $1
-           AND LOWER(ir.issue_type) = 'lost'`,
-        [deptId]
+         JOIN assets a ON ir.asset_id = a.id
+         JOIN asset_categories ac ON a.category_id = ac.id
+         LEFT JOIN users u ON ir.reported_by = u.id
+         LEFT JOIN asset_assignments aa ON aa.asset_id = a.id AND aa.status = 'active'
+         WHERE LOWER(ir.issue_type) = 'lost'
+           AND ($1::integer IS NULL OR ac.specialist_department_id = $1)
+           AND ($2::integer IS NULL OR COALESCE(aa.department_id, u.department_id) = $2)`,
+        filterParams
       ),
       pool.query(
         `SELECT COUNT(ir.id) AS count
          FROM issue_reports ir
-         JOIN users u ON ir.reported_by = u.id
-         WHERE u.department_id = $1
-           AND LOWER(ir.issue_type) = 'damaged'`,
-        [deptId]
+         JOIN assets a ON ir.asset_id = a.id
+         JOIN asset_categories ac ON a.category_id = ac.id
+         LEFT JOIN users u ON ir.reported_by = u.id
+         LEFT JOIN asset_assignments aa ON aa.asset_id = a.id AND aa.status = 'active'
+         WHERE LOWER(ir.issue_type) = 'damaged'
+           AND ($1::integer IS NULL OR ac.specialist_department_id = $1)
+           AND ($2::integer IS NULL OR COALESCE(aa.department_id, u.department_id) = $2)`,
+        filterParams
       ),
     ]);
 
@@ -113,14 +151,16 @@ router.get('/store/department', authenticateToken, async (req, res) => {
         `SELECT a.id, a.name, a.serial_number, a.brand, a.model, a.condition,
                 ac.name AS category_name,
                 sd.name AS store_department_name,
+                sd.name AS department_name,
                 'reserved' AS pool_type
          FROM assets a
          JOIN asset_categories ac ON a.category_id = ac.id
          LEFT JOIN departments sd ON a.store_department_id = sd.id
          WHERE a.status = 'available'
-           AND a.store_department_id = $1
-         ORDER BY ac.name, a.name`,
-        [deptId]
+           AND ($1::integer IS NULL OR ac.specialist_department_id = $1)
+           AND ($2::integer IS NULL OR a.store_department_id = $2)
+         ORDER BY sd.name NULLS LAST, ac.name, a.name`,
+        filterParams
       );
       items = itemsResult.rows;
     } else if (view === 'used') {
@@ -139,49 +179,35 @@ router.get('/store/department', authenticateToken, async (req, res) => {
          LEFT JOIN departments d ON aa.department_id = d.id
          LEFT JOIN departments sd ON a.store_department_id = sd.id
          WHERE aa.status = 'active'
-           AND aa.department_id = $1
-         ORDER BY ac.name, a.name`,
-        [deptId]
+           AND ($1::integer IS NULL OR ac.specialist_department_id = $1)
+           AND ($2::integer IS NULL OR aa.department_id = $2)
+         ORDER BY d.name NULLS LAST, ac.name, a.name`,
+        filterParams
       );
       items = itemsResult.rows;
-    } else if (view === 'lost') {
-      const itemsResult = await pool.query(
-        `SELECT ir.id, ir.report_number, ir.status AS report_status, ir.created_at,
-                a.id AS asset_id, a.name, a.serial_number, a.brand, a.model,
-                ac.name AS category_name,
-                u.name AS reporter_name,
-                d.name AS department_name,
-                ir.description,
-                ir.resolution_outcome
-         FROM issue_reports ir
-         JOIN assets a ON ir.asset_id = a.id
-         JOIN asset_categories ac ON a.category_id = ac.id
-         LEFT JOIN users u ON ir.reported_by = u.id
-         LEFT JOIN departments d ON u.department_id = d.id
-         WHERE u.department_id = $1
-           AND LOWER(ir.issue_type) = 'lost'
-         ORDER BY ir.created_at DESC NULLS LAST`,
-        [deptId]
-      );
-      items = itemsResult.rows;
-    } else if (view === 'damaged') {
+    } else if (view === 'lost' || view === 'damaged') {
       const itemsResult = await pool.query(
         `SELECT ir.id, ir.report_number, ir.status AS report_status, ir.created_at,
                 a.id AS asset_id, a.name, a.serial_number, a.brand, a.model, a.condition,
                 ac.name AS category_name,
                 u.name AS reporter_name,
-                d.name AS department_name,
+                COALESCE(ad.name, rd.name) AS department_name,
+                emp.name AS assigned_to_name,
                 ir.description,
                 ir.resolution_outcome
          FROM issue_reports ir
          JOIN assets a ON ir.asset_id = a.id
          JOIN asset_categories ac ON a.category_id = ac.id
          LEFT JOIN users u ON ir.reported_by = u.id
-         LEFT JOIN departments d ON u.department_id = d.id
-         WHERE u.department_id = $1
-           AND LOWER(ir.issue_type) = 'damaged'
+         LEFT JOIN departments rd ON u.department_id = rd.id
+         LEFT JOIN asset_assignments aa ON aa.asset_id = a.id AND aa.status = 'active'
+         LEFT JOIN users emp ON aa.assigned_to = emp.id
+         LEFT JOIN departments ad ON aa.department_id = ad.id
+         WHERE LOWER(ir.issue_type) = $3
+           AND ($1::integer IS NULL OR ac.specialist_department_id = $1)
+           AND ($2::integer IS NULL OR COALESCE(aa.department_id, u.department_id) = $2)
          ORDER BY ir.created_at DESC NULLS LAST`,
-        [deptId]
+        [ownerDeptId, locationDeptId, view]
       );
       items = itemsResult.rows;
     } else {
@@ -195,14 +221,18 @@ router.get('/store/department', authenticateToken, async (req, res) => {
        FROM asset_assignments aa
        JOIN assets a ON aa.asset_id = a.id
        JOIN asset_categories ac ON a.category_id = ac.id
-       WHERE aa.department_id = $1 AND aa.status = 'active'
+       WHERE aa.status = 'active'
+         AND ($1::integer IS NULL OR ac.specialist_department_id = $1)
+         AND ($2::integer IS NULL OR aa.department_id = $2)
        GROUP BY ac.id, ac.name
        ORDER BY ac.name`,
-      [deptId]
+      filterParams
     );
 
     res.json({
-      department: deptResult.rows[0].name,
+      department: locationDeptName || (isGlobalViewer ? 'All departments' : req.user.department),
+      managed_categories_only: Boolean(ownerDeptId),
+      scope: locationDeptId ? 'department' : 'all',
       view,
       counts,
       summary: summaryResult.rows,
@@ -213,7 +243,6 @@ router.get('/store/department', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
-
 // Get available assets for assignment (must be before /:id)
 router.get('/available/list', authenticateToken, async (req, res) => {
   try {
@@ -281,32 +310,81 @@ router.get('/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Create asset (procurement only)
-router.post('/', authenticateToken, authorizeRoles('inventory'), async (req, res) => {
+// Create asset (inventory or department head for their store)
+router.post('/', authenticateToken, authorizeRoles('inventory', 'head'), async (req, res) => {
   try {
-    const { name, category, serial_number, model, brand, purchase_date, purchase_cost, condition, notes, store_department } = req.body;
+    const {
+      name, category, serial_number, model, brand, purchase_date, purchase_cost,
+      condition, notes, store_department, quantity, current_location,
+    } = req.body;
     
-    const categoryResult = await pool.query('SELECT id FROM asset_categories WHERE name = $1', [category]);
+    const categoryResult = await pool.query(
+      'SELECT id, specialist_department_id FROM asset_categories WHERE name = $1',
+      [category]
+    );
     if (categoryResult.rows.length === 0) {
       return res.status(400).json({ error: 'Invalid category' });
     }
 
-    if (!store_department) {
+    let storeDepartmentName = store_department;
+    const userRole = req.user.role === 'specialist' ? 'head' : req.user.role === 'procurement' ? 'inventory' : req.user.role;
+    if (userRole === 'head') {
+      storeDepartmentName = req.user.department;
+      const userDept = await pool.query('SELECT department_id FROM users WHERE id = $1', [req.user.id]);
+      const deptId = userDept.rows[0]?.department_id;
+      if (!deptId || categoryResult.rows[0].specialist_department_id !== deptId) {
+        return res.status(403).json({ error: 'You can only add assets in categories managed by your department' });
+      }
+    }
+
+    if (!storeDepartmentName) {
       return res.status(400).json({ error: 'Belonging department is required for all assets' });
     }
-    const sd = await pool.query('SELECT id FROM departments WHERE name = $1', [store_department]);
+    if (!name?.trim()) {
+      return res.status(400).json({ error: 'Asset name is required' });
+    }
+
+    const sd = await pool.query('SELECT id FROM departments WHERE name = $1', [storeDepartmentName]);
     if (!sd.rows.length) return res.status(400).json({ error: 'Invalid belonging department' });
     const storeDeptId = sd.rows[0].id;
-    
-    const result = await pool.query(
-      'INSERT INTO assets (name, category_id, serial_number, model, brand, purchase_date, purchase_cost, condition, notes, store_department_id, current_location) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *',
-      [name, categoryResult.rows[0].id, serial_number, model, brand, purchase_date, purchase_cost, condition, notes, storeDeptId, 'Inventory Store']
-    );
-    
-    res.status(201).json(result.rows[0]);
+    const qty = Math.max(1, parseInt(quantity, 10) || 1);
+    const location = current_location || 'Inventory Store';
+    const created = [];
+
+    for (let i = 0; i < qty; i += 1) {
+      let serial = serial_number || null;
+      if (qty > 1 && serial_number) {
+        serial = `${serial_number}${qty === 1 ? '' : `-${String(i + 1).padStart(2, '0')}`}`;
+      }
+      const result = await pool.query(
+        `INSERT INTO assets
+          (name, category_id, serial_number, model, brand, purchase_date, purchase_cost, condition, notes, store_department_id, current_location, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'available')
+         RETURNING *`,
+        [
+          qty > 1 ? `${name} (${i + 1}/${qty})` : name,
+          categoryResult.rows[0].id,
+          serial,
+          model || null,
+          brand || null,
+          purchase_date || null,
+          purchase_cost || null,
+          condition || 'good',
+          notes || null,
+          storeDeptId,
+          location,
+        ]
+      );
+      created.push(result.rows[0]);
+    }
+
+    res.status(201).json(qty === 1 ? created[0] : { created: created.length, assets: created });
   } catch (error) {
     console.error('Create asset error:', error);
-    res.status(500).json({ error: 'Server error' });
+    if (error.code === '23505') {
+      return res.status(400).json({ error: 'Serial number already exists' });
+    }
+    res.status(500).json({ error: error.message || 'Server error' });
   }
 });
 

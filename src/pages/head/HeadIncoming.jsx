@@ -152,6 +152,34 @@ export const HeadIncoming = () => {
     }
   };
 
+  const hasUnavailableOwnedItem = (request) =>
+    ownedItems(request?.items).some((item) => {
+      const remaining = item.quantity - (item.fulfilled_quantity || 0);
+      return remaining > 0 && (availableAssets[item.id] || []).length === 0;
+    });
+
+  const handleSendToProcurement = async () => {
+    try {
+      const result = await requestsApi.sendToProcurement(selected.id);
+      toast.success(result?.message || "Request sent to Procurement");
+      setSelected(null);
+      loadAll();
+    } catch (error) {
+      toast.error(error.message || "Failed to send request to Procurement");
+    }
+  };
+
+  const handleRecallFromProcurement = async () => {
+    try {
+      const result = await requestsApi.recallFromProcurement(selected.id);
+      toast.success(result?.message || "Request recalled to store assignment");
+      setSelected(null);
+      loadAll();
+    } catch (error) {
+      toast.error(error.message || "Failed to recall request");
+    }
+  };
+
   const handleReturnToRequester = async (action, comment) => {
     const reason = (comment ?? notes).trim();
     if (!reason) { toast.error("Comment is required"); return; }
@@ -470,6 +498,11 @@ export const HeadIncoming = () => {
           )}
           {type === "deptassign" && selected?.status === "pending_dept_assignment" && ownedItems(selected?.items).some((item) => item.quantity - (item.fulfilled_quantity || 0) > 0) && (
             <DialogFooter className="gap-2 flex-wrap">
+              {hasUnavailableOwnedItem(selected) && (
+                <Button variant="outline" onClick={handleSendToProcurement}>
+                  Send to Procurement
+                </Button>
+              )}
               <Button variant="outline" onClick={() => openDecision("return")}><RotateCcw className="w-4 h-4 mr-1" /> Return</Button>
               <Button variant="destructive" onClick={() => openDecision("reject")}><X className="w-4 h-4 mr-1" /> Reject</Button>
               <Button onClick={handleDeptAssign}><Check className="w-4 h-4 mr-1" /> Assign & Forward</Button>
@@ -477,6 +510,11 @@ export const HeadIncoming = () => {
           )}
           {type === "deptassign" && isDeptUpdate(selected?.status) && ownedItems(selected?.items).length > 0 && (
             <DialogFooter className="gap-2 flex-wrap">
+              {selected.status === "pending_procurement" && (
+                <Button variant="outline" onClick={handleRecallFromProcurement}>
+                  Recall
+                </Button>
+              )}
               <Button variant="outline" onClick={() => openDecision("return")}><RotateCcw className="w-4 h-4 mr-1" /> Return</Button>
               <Button variant="destructive" onClick={() => openDecision("reject")}><X className="w-4 h-4 mr-1" /> Reject</Button>
               <Button onClick={handleDeptAssign}><Check className="w-4 h-4 mr-1" /> Save Changes</Button>

@@ -39,9 +39,10 @@ export function getStatusLabel(status, item) {
     case 'pending_dept_assignment':
       return owner ? `Awaiting ${owner} Store` : 'Awaiting Store';
     case 'pending_inventory':
-    case 'pending_procurement':
     case 'specialist_approved':
       return 'Awaiting Inventory';
+    case 'pending_procurement':
+      return 'Awaiting Procurement';
     case 'approved':
       return 'Inventory Approved';
     case 'fulfilled':

@@ -14,9 +14,10 @@ export function getStatusDisplay(status, ctx = {}) {
     case 'pending_dept_assignment':
       return owner ? `Awaiting ${owner} Store` : 'Awaiting Store';
     case 'pending_inventory':
-    case 'pending_procurement':
     case 'specialist_approved':
       return 'Awaiting Inventory';
+    case 'pending_procurement':
+      return 'Awaiting Procurement';
     case 'approved':
       return 'Inventory Approved';
     case 'fulfilled':
@@ -25,6 +26,10 @@ export function getStatusDisplay(status, ctx = {}) {
       return 'Partially Assigned';
     case 'rejected':
       return 'Rejected';
+    case 'returned':
+      return 'Returned — Edit & Resubmit';
+    case 'cancelled':
+      return 'Cancelled';
     case 'resolved':
       return ctx.resolution_outcome
         ? `Resolved — ${String(ctx.resolution_outcome).replace(/_/g, ' ')}`

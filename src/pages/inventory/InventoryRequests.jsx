@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/ca
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { StatusBadge } from "../../components/StatusBadge";
-import { CheckSquare, Check, X } from "lucide-react";
+import { CheckSquare, Check } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "../../components/ui/dialog";
 import { Timeline } from "../../components/Timeline";
@@ -53,30 +53,20 @@ export const InventoryRequests = () => {
     if (!actionNotes.trim()) { toast.error("Comment is required"); return; }
     setSubmitting(true);
     try {
-      const result = await requestsApi.inventoryAction(selectedRequest.id, {
-        action: "approve",
-        notes: actionNotes,
-      });
-      toast.success(result.message || "Request confirmed");
+      const result = await (selectedRequest.status === "pending_procurement"
+        ? requestsApi.procurementAction(selectedRequest.id, {
+            action: "approve",
+            notes: actionNotes,
+          })
+        : requestsApi.inventoryAction(selectedRequest.id, {
+            action: "approve",
+            notes: actionNotes,
+          }));
+      toast.success(result.message || "Request approved");
       setSelectedRequest(null);
       loadAll();
     } catch (error) {
-      toast.error(error.message || "Failed to confirm");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleReject = async () => {
-    if (!actionNotes.trim()) { toast.error("Comment is required"); return; }
-    setSubmitting(true);
-    try {
-      await requestsApi.inventoryAction(selectedRequest.id, { action: "reject", notes: actionNotes });
-      toast.success("Request rejected");
-      setSelectedRequest(null);
-      loadAll();
-    } catch (error) {
-      toast.error(error.message || "Failed to reject");
+      toast.error(error.message || "Failed to approve");
     } finally {
       setSubmitting(false);
     }
@@ -125,7 +115,7 @@ export const InventoryRequests = () => {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Asset Requests</h1>
-        <p className="text-muted-foreground">Confirm or reject requests after department store assignment</p>
+        <p className="text-muted-foreground">Approve requests after department store assignment</p>
       </div>
 
       <Tabs defaultValue="pending">
@@ -159,7 +149,11 @@ export const InventoryRequests = () => {
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Review Request — {selectedRequest?.request_number}</DialogTitle>
-            <DialogDescription>Confirm assignments made by owning department or reject with comment</DialogDescription>
+            <DialogDescription>
+              {selectedRequest?.status === "pending_procurement"
+                ? "Approve to return this request to store assignment"
+                : "Approve to complete this request — Inventory is the final stage"}
+            </DialogDescription>
           </DialogHeader>
           {selectedRequest && (
             <div className="space-y-4">
@@ -195,14 +189,13 @@ export const InventoryRequests = () => {
 
               <div>
                 <Label>Comment *</Label>
-                <Textarea value={actionNotes} onChange={(e) => setActionNotes(e.target.value)} placeholder="Required comment for confirm or reject" />
+                <Textarea value={actionNotes} onChange={(e) => setActionNotes(e.target.value)} placeholder="Required comment" />
               </div>
             </div>
           )}
           <DialogFooter className="gap-2">
-            <Button variant="destructive" onClick={handleReject} disabled={submitting}><X className="w-4 h-4 mr-1" />Reject</Button>
             <Button onClick={handleConfirm} disabled={submitting}>
-              <Check className="w-4 h-4 mr-1" />{submitting ? "Confirming..." : "Confirm"}
+              <Check className="w-4 h-4 mr-1" />{submitting ? "Approving..." : "Approve"}
             </Button>
           </DialogFooter>
         </DialogContent>

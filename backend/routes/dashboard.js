@@ -30,7 +30,7 @@ router.get('/head', authenticateToken, authorizeRoles('head'), async (req, res) 
     const userResult = await pool.query('SELECT department_id FROM users WHERE id = $1', [userId]);
     const departmentId = userResult.rows[0].department_id;
 
-    const [assets, gatePasses, ownerGatePasses, ownerRequests, ownerReports, reports, employees, deptRequests, fulfilledRequests, deptAssignment] = await Promise.all([
+    const [assets, gatePasses, ownerGatePasses, ownerRequests, ownerReports, reports, employees, deptRequests, fulfilledRequests, deptAssignment, returnedRequests] = await Promise.all([
       pool.query("SELECT COUNT(*) FROM asset_assignments WHERE department_id = $1 AND status = 'active'", [departmentId]),
       pool.query(`SELECT COUNT(*) FROM gate_passes gp JOIN users u ON gp.employee_id = u.id WHERE u.department_id = $1 AND gp.status = 'pending_head'`, [departmentId]),
       pool.query(`SELECT COUNT(*) FROM gate_passes gp JOIN assets a ON gp.asset_id = a.id JOIN asset_categories ac ON a.category_id = ac.id WHERE gp.status = 'pending_owner_dept' AND ac.specialist_department_id = $1`, [departmentId]),
@@ -38,9 +38,10 @@ router.get('/head', authenticateToken, authorizeRoles('head'), async (req, res) 
       pool.query(`SELECT COUNT(*) FROM issue_reports ir JOIN assets a ON ir.asset_id = a.id JOIN asset_categories ac ON a.category_id = ac.id WHERE ir.status = 'pending_owner_dept' AND ac.specialist_department_id = $1`, [departmentId]),
       pool.query(`SELECT COUNT(*) FROM issue_reports ir JOIN users u ON ir.reported_by = u.id WHERE u.department_id = $1 AND ir.status = 'pending_head'`, [departmentId]),
       pool.query('SELECT COUNT(*) FROM users WHERE department_id = $1 AND is_active = true', [departmentId]),
-      pool.query("SELECT COUNT(*) FROM asset_requests WHERE department_id = $1 AND status IN ('pending_owner_dept','pending_dept_assignment','pending_inventory','pending_procurement')", [departmentId]),
+      pool.query("SELECT COUNT(*) FROM asset_requests WHERE department_id = $1 AND status IN ('pending_owner_dept','pending_dept_assignment','pending_inventory','pending_procurement','returned')", [departmentId]),
       pool.query("SELECT COUNT(*) FROM asset_requests WHERE department_id = $1 AND status IN ('fulfilled','partially_fulfilled')", [departmentId]),
       pool.query(`SELECT COUNT(DISTINCT ar.id) FROM asset_requests ar JOIN asset_request_items ari ON ar.id = ari.request_id JOIN asset_categories ac ON ari.category_id = ac.id WHERE ar.status = 'pending_dept_assignment' AND ac.specialist_department_id = $1`, [departmentId]),
+      pool.query("SELECT COUNT(*) FROM asset_requests WHERE department_id = $1 AND status = 'returned'", [departmentId]),
     ]);
 
     res.json({
@@ -54,6 +55,7 @@ router.get('/head', authenticateToken, authorizeRoles('head'), async (req, res) 
       pending_dept_requests: parseInt(deptRequests.rows[0].count),
       fulfilled_requests: parseInt(fulfilledRequests.rows[0].count),
       pending_dept_assignment: parseInt(deptAssignment.rows[0].count),
+      returned_requests: parseInt(returnedRequests.rows[0].count),
     });
   } catch (error) {
     res.status(500).json({ error: 'Server error' });

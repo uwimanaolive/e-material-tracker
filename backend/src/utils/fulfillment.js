@@ -255,6 +255,60 @@ async function releaseDeptStoreAssignments(client, requestId, performingDeptId, 
   return assignments.rows.length;
 }
 
+export async function releaseAllRequestAssignments(client, requestId, performedBy, notes) {
+  const assignments = await client.query(
+    `SELECT aa.id, aa.asset_id, aa.assigned_to, a.store_department_id
+     FROM asset_assignments aa
+     JOIN assets a ON aa.asset_id = a.id
+     WHERE aa.request_id = $1 AND aa.status = 'active'`,
+    [requestId]
+  );
+
+  for (const row of assignments.rows) {
+    const storeDept = row.store_department_id
+      ? await client.query('SELECT name FROM departments WHERE id = $1', [row.store_department_id])
+      : { rows: [] };
+    const storeName = storeDept.rows[0]?.name || INVENTORY_STORE;
+
+    await client.query(
+      `UPDATE asset_assignments
+       SET status = 'returned', updated_at = CURRENT_TIMESTAMP
+       WHERE id = $1`,
+      [row.id]
+    );
+
+    await client.query(
+      `UPDATE assets
+       SET status = 'available', current_location = $1, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $2`,
+      [storeName, row.asset_id]
+    );
+
+    await client.query(
+      `INSERT INTO assignment_history
+        (assignment_id, asset_id, from_user, to_user, performed_by, action, notes)
+       VALUES ($1, $2, $3, NULL, $4, $5, $6)`,
+      [row.id, row.asset_id, row.assigned_to, performedBy, 'Returned to requester', notes || null]
+    );
+
+    await client.query(
+      `INSERT INTO inventory_transactions
+        (asset_id, transaction_type, from_location, to_location, performed_by, notes)
+       VALUES ($1, 'return', $2, $3, $4, $5)`,
+      [row.asset_id, storeName, storeName, performedBy, notes || `Request #${requestId} returned`]
+    );
+  }
+
+  await client.query(
+    `UPDATE asset_request_items
+     SET fulfilled_quantity = 0
+     WHERE request_id = $1`,
+    [requestId]
+  );
+
+  return assignments.rows.length;
+}
+
 async function allRequestItemsFulfilled(client, requestId) {
   const result = await client.query(
     `SELECT COUNT(*)::int AS incomplete
@@ -390,12 +444,8 @@ export async function inventoryConfirmRequest(
     throw new Error(`Request is not awaiting inventory approval (status: ${request.status})`);
   }
 
-  if (action === 'reject') {
-    await client.query(
-      `UPDATE asset_requests SET status = 'rejected', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-      [requestId]
-    );
-    return { newStatus: 'rejected', actionMsg: 'Inventory rejected request' };
+  if (action !== 'approve') {
+    throw new Error('Only Approve is available at inventory stage');
   }
 
   // Sync fulfilled counts from actual assignments before deciding status
@@ -427,7 +477,7 @@ export async function inventoryConfirmRequest(
   );
 
   const complete = parseInt(check.rows[0].incomplete, 10) === 0;
-  const newStatus = complete ? 'fulfilled' : 'partially_fulfilled';
+  const finalStatus = complete ? 'fulfilled' : 'partially_fulfilled';
 
   await client.query(
     `UPDATE asset_requests
@@ -435,14 +485,14 @@ export async function inventoryConfirmRequest(
          fulfilled_at = CURRENT_TIMESTAMP,
          updated_at = CURRENT_TIMESTAMP
      WHERE id = $2`,
-    [newStatus, requestId]
+    [finalStatus, requestId]
   );
 
   return {
-    newStatus,
+    newStatus: finalStatus,
     actionMsg: complete
-      ? 'Assets assigned to employee'
-      : 'Partially assigned — some requested items were not fully fulfilled',
+      ? 'Inventory approved — assets assigned'
+      : 'Inventory approved — partially assigned',
   };
 }
 
